@@ -1,0 +1,81 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PANEL",
+    "meta": {
+        "update_url": "https://raw.githubusercontent.com/TeamCryptid/eggs/main/minecraft/proxy/velocity/egg-pterodactyl-velocity.json",
+        "version": "PTDL_v2"
+    },
+    "exported_at": "2024-06-01T19:40:07+00:00",
+    "name": "Velocity",
+    "author": "parker@parkervcp.com",
+    "description": "Velocity is a Minecraft server proxy with unparalleled server support, scalability, and flexibility. (TeamCryptid eggs v1.0.0)",
+    "features": [
+        "eula",
+        "java_version",
+        "pid_limit"
+    ],
+    "docker_images": {
+        "Java 25": "ghcr.io/pelican-eggs/yolks:java_25",
+        "Java 21": "ghcr.io/pelican-eggs/yolks:java_21",
+        "Java 17": "ghcr.io/pelican-eggs/yolks:java_17",
+        "Java 16": "ghcr.io/pelican-eggs/yolks:java_16",
+        "Java 11": "ghcr.io/pelican-eggs/yolks:java_11",
+        "Java 8": "ghcr.io/pelican-eggs/yolks:java_8"
+    },
+    "file_denylist": [],
+    "startup": "java -Xms128M -Xmx{{SERVER_MEMORY}}M -XX:+UseG1GC -XX:G1HeapRegionSize=4M -XX:+UnlockExperimentalVMOptions -XX:+ParallelRefProcEnabled -XX:+AlwaysPreTouch -XX:MaxInlineLevel=15 -jar {{SERVER_JARFILE}}",
+    "config": {
+        "files": "{\r\n    \"velocity.toml\": {\r\n        \"parser\": \"file\",\r\n        \"find\": {\r\n            \"bind = \": \"bind = \\\"0.0.0.0:{{server.build.default.port}}\\\"\"\r\n        }\r\n    }\r\n}",
+        "logs": "{}",
+        "startup": "{\r\n    \"done\": \"Done (\"\r\n}",
+        "stop": "end"
+    },
+    "scripts": {
+        "installation": {
+            "container": "ghcr.io/pelican-eggs/installers:alpine",
+            "entrypoint": "ash",
+            "script": "#!/bin/ash\n# fill-install.sh v1.0.1 - TeamCryptid eggs\n# Installs Paper or Velocity from the PaperMC Fill v3 API.\n# PROJECT is set by tools/build.py when the egg is built.\n#\n# Based on pelican-eggs/minecraft (MIT). Changes from upstream:\n#   - User-Agent sent on every API call (required by PaperMC)\n#   - \"latest\" resolves to the newest stable version (no SNAPSHOT/rc/pre)\n#   - Download verified against the API's SHA-256 before replacing the jar\n#   - Old jar is kept until the new one is verified\n#   - Velocity: honours VELOCITY_VERSION, random forwarding.secret\n#\n# Server Files: /mnt/server\nPROJECT=\"velocity\"\n\n: \"${API_ENDPOINT:=fill.papermc.io}\"\n: \"${SERVER_JARFILE:=server.jar}\"\n: \"${BUILD_NUMBER:=latest}\"\n: \"${USER_AGENT:=TeamCryptid-eggs/1.0.0 (https://github.com/TeamCryptid/eggs)}\"\nCONFIG_BASE=\"https://raw.githubusercontent.com/TeamCryptid/eggs/main/minecraft\"\nAPI=\"https://${API_ENDPOINT}/v3/projects/${PROJECT}\"\n\nfail() {\n\techo \"ERROR: $*\"\n\texit 1\n}\n\napi() {\n\tcurl -fsSL -H \"User-Agent: ${USER_AGENT}\" \"$1\"\n}\n\nif [ \"${PROJECT}\" = \"velocity\" ]; then\n\tVERSION=\"${VELOCITY_VERSION:-latest}\"\nelse\n\tVERSION=\"${MINECRAFT_VERSION:-latest}\"\nfi\n\nmkdir -p /mnt/server\ncd /mnt/server || fail \"cannot enter /mnt/server\"\n\nEXPECTED_SHA=\"\"\nif [ -n \"${DL_PATH}\" ]; then\n\techo \"Using supplied download URL: ${DL_PATH}\"\n\tDOWNLOAD_URL=$(eval echo \"$(echo \"${DL_PATH}\" | sed -e 's/{{/${/g' -e 's/}}/}/g')\")\nelse\n\tPROJECT_JSON=$(api \"${API}\") || fail \"could not reach ${API}\"\n\n\tLATEST_VERSION=$(printf '%s' \"${PROJECT_JSON}\" | jq -r '[.versions[][] | select(test(\"SNAPSHOT|-rc|-pre|-beta|-alpha\"; \"i\") | not)][0] // empty')\n\t[ -n \"${LATEST_VERSION}\" ] || fail \"no stable ${PROJECT} version found\"\n\n\tif [ \"${VERSION}\" = \"latest\" ]; then\n\t\tVERSION=\"${LATEST_VERSION}\"\n\telif ! printf '%s' \"${PROJECT_JSON}\" | jq -e --arg v \"${VERSION}\" '[.versions[][]] | index($v)' >/dev/null; then\n\t\techo \"Version ${VERSION} not found. Using latest stable ${LATEST_VERSION}\"\n\t\tVERSION=\"${LATEST_VERSION}\"\n\tfi\n\n\tBUILD_JSON=$(api \"${API}/versions/${VERSION}/builds/${BUILD_NUMBER}\") || {\n\t\techo \"Build ${BUILD_NUMBER} not found for ${VERSION}. Using latest build\"\n\t\tBUILD_JSON=$(api \"${API}/versions/${VERSION}/builds/latest\") || fail \"no builds for ${PROJECT} ${VERSION}\"\n\t}\n\n\tBUILD_NUMBER=$(printf '%s' \"${BUILD_JSON}\" | jq -r '.id')\n\tDOWNLOAD_URL=$(printf '%s' \"${BUILD_JSON}\" | jq -r '.downloads.\"server:default\".url // empty')\n\tEXPECTED_SHA=$(printf '%s' \"${BUILD_JSON}\" | jq -r '.downloads.\"server:default\".checksums.sha256 // empty')\n\t[ -n \"${DOWNLOAD_URL}\" ] || fail \"no download URL for ${PROJECT} ${VERSION} build ${BUILD_NUMBER}\"\n\n\techo \"Project: ${PROJECT}\"\n\techo \"Version: ${VERSION}\"\n\techo \"Build:   ${BUILD_NUMBER}\"\nfi\n\necho \"Downloading ${DOWNLOAD_URL}\"\ncurl -fsSL -H \"User-Agent: ${USER_AGENT}\" -o \"${SERVER_JARFILE}.new\" \"${DOWNLOAD_URL}\" || {\n\trm -f \"${SERVER_JARFILE}.new\"\n\tfail \"download failed\"\n}\n\nif [ -n \"${EXPECTED_SHA}\" ]; then\n\tACTUAL_SHA=$(sha256sum \"${SERVER_JARFILE}.new\" | cut -d' ' -f1)\n\tif [ \"${ACTUAL_SHA}\" != \"${EXPECTED_SHA}\" ]; then\n\t\trm -f \"${SERVER_JARFILE}.new\"\n\t\tfail \"SHA-256 mismatch (expected ${EXPECTED_SHA}, got ${ACTUAL_SHA})\"\n\tfi\n\techo \"SHA-256 verified: ${ACTUAL_SHA}\"\nfi\n\nif [ -f \"${SERVER_JARFILE}\" ]; then\n\tmv \"${SERVER_JARFILE}\" \"${SERVER_JARFILE}.old\"\nfi\nmv \"${SERVER_JARFILE}.new\" \"${SERVER_JARFILE}\"\n\nif [ \"${PROJECT}\" = \"velocity\" ]; then\n\tif [ ! -f velocity.toml ]; then\n\t\techo \"Downloading velocity.toml\"\n\t\tcurl -fsSL -o velocity.toml \"${CONFIG_BASE}/proxy/velocity/velocity.toml\" || fail \"could not download velocity.toml\"\n\tfi\n\tif [ ! -s forwarding.secret ]; then\n\t\techo \"Creating forwarding.secret\"\n\t\thead -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32 > forwarding.secret\n\tfi\nelse\n\tif [ ! -f server.properties ]; then\n\t\techo \"Downloading server.properties\"\n\t\tcurl -fsSL -o server.properties \"${CONFIG_BASE}/java/server.properties\" || fail \"could not download server.properties\"\n\tfi\nfi\n\necho \"Install complete\"\n"
+        }
+    },
+    "variables": [
+        {
+            "name": "Velocity Version",
+            "description": "The Velocity Proxy version to download.\r\n\r\nSet to 'latest ' the download the last stable build.",
+            "env_variable": "VELOCITY_VERSION",
+            "default_value": "latest",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string|max:20",
+            "field_type": "text"
+        },
+        {
+            "name": "Server Jar File",
+            "description": "Server Jarfile, by default this is set to 'velocity.jar'.\r\nSet it to otherwise if you wish to have a different jarfile name.",
+            "env_variable": "SERVER_JARFILE",
+            "default_value": "velocity.jar",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string|max:32|regex:/^([\\w\\d._-]+)(\\.jar)$/",
+            "field_type": "text"
+        },
+        {
+            "name": "Download Path",
+            "description": "A URL to use to download a server.jar rather than the ones in the install script. This is not user viewable.",
+            "env_variable": "DL_PATH",
+            "default_value": "",
+            "user_viewable": false,
+            "user_editable": false,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Build Number",
+            "description": "The build number for the velocity release.\r\n\r\nLeave at latest to always get the latest version. Invalid versions will default to latest.",
+            "env_variable": "BUILD_NUMBER",
+            "default_value": "latest",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:20",
+            "field_type": "text"
+        }
+    ]
+}
