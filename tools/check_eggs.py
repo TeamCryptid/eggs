@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """check_eggs.py - TeamCryptid eggs
 
-Validates every egg under minecraft/ before it is committed:
+Validates every egg (minecraft/, zomboid/) before it is committed:
   - valid JSON in Pterodactyl PTDL_v2 format (imports into Jexactyl/Pterodactyl)
   - required fields present, variable rules in Pterodactyl's string form
   - the panel's own model rules (Jexactyl app/Models/Egg.php): author is an email,
@@ -23,6 +23,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from build import RAW_BASE  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+EGG_DIRS = ["minecraft", "zomboid"]
 REQUIRED = ["name", "description", "docker_images", "startup", "config", "scripts", "variables"]
 
 
@@ -93,9 +94,9 @@ def check(path):
 
 
 def main():
-    eggs = sorted((ROOT / "minecraft").rglob("*.json"))
+    eggs = sorted(p for d in EGG_DIRS for p in (ROOT / d).rglob("*.json"))
     if not eggs:
-        sys.exit("no eggs found under minecraft/")
+        sys.exit(f"no eggs found under {', '.join(EGG_DIRS)}")
     failed = 0
     for path in eggs:
         problems = check(path)
