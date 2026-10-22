@@ -111,14 +111,16 @@ def patch_server_properties_url(egg, _upstream, egg_id):
 
 
 # Runs before the upstream Zomboid startup on every boot (after any auto-update).
-# 1. Java heap = 80% of the panel memory limit, written into ProjectZomboid64.json
+# 1. Java heap = 95% of the panel memory limit, written into ProjectZomboid64.json
 #    (game updates reset that file, so it is reapplied each start; 0 = unlimited, skipped).
-# 2. MaxPlayers in the server ini forced to the admin-set MAX_PLAYERS (ini exists after first boot).
+#    Wings adds 5% on top of the plan for the container hard limit (more on plans <= 4 GB),
+#    so the JVM's non-heap memory has about 10% of the plan to work with.
+# 2. MaxPlayers in the server ini set from the MAX_PLAYERS variable (ini exists after first boot).
 # The image entrypoint runs `echo ${STARTUP}` and `eval` unquoted, so this text must not
 # contain glob characters (* ? [ ]); build() refuses to write it if it does.
 ZOMBOID_PREFIX = (
     'test "${SERVER_MEMORY:-0}" -gt 0 && test -f ProjectZomboid64.json && '
-    'sed -i -E "s/-Xmx\\w+/-Xmx$(( SERVER_MEMORY - SERVER_MEMORY / 5 ))m/" ProjectZomboid64.json ; '
+    'sed -i -E "s/-Xmx\\w+/-Xmx$(( SERVER_MEMORY - SERVER_MEMORY / 20 ))m/" ProjectZomboid64.json ; '
     'grep -q -- "-Xmx" ProjectZomboid64.json && echo "Java heap: $(grep -oE -- "-Xmx\\w+" ProjectZomboid64.json)" '
     '|| echo "WARNING: no -Xmx in ProjectZomboid64.json, heap not tied to panel memory" ; '
     'test -f ".cache/Server/${SERVER_NAME}.ini" && '
@@ -129,7 +131,7 @@ ZOMBOID_UPSTREAM_START = 'export PATH="./jre64/bin:$PATH" ;'
 
 
 def patch_zomboid_startup(egg, _upstream, egg_id):
-    """Tie the Java heap to panel memory and enforce MAX_PLAYERS on every start."""
+    """Tie the Java heap to panel memory and apply MAX_PLAYERS on every start."""
     if not egg["startup"].startswith(ZOMBOID_UPSTREAM_START) or "./ProjectZomboid64" not in egg["startup"]:
         sys.exit(f"{egg_id}: upstream startup changed; review the patch")
     bad = set(ZOMBOID_PREFIX) & set("*?[]")
@@ -146,12 +148,12 @@ def find_var(egg, env, egg_id):
 
 
 def patch_zomboid_max_players(egg, _upstream, egg_id):
-    """Upstream defines MAX_PLAYERS but never uses it. Make it the admin-set player cap."""
+    """Upstream defines MAX_PLAYERS but never uses it. Make it a customer setting that works."""
     v = find_var(egg, "MAX_PLAYERS", egg_id)
     v.update({
-        "description": "Player cap for this server. Set by staff, applied to the server ini on every start.",
+        "description": "Maximum players. Applied to the server ini on every start, so change it here rather than in the ini.",
         "user_viewable": True,
-        "user_editable": False,
+        "user_editable": True,
         "rules": "required|integer|between:1,100",
     })
 

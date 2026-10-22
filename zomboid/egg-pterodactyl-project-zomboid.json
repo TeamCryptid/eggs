@@ -15,7 +15,7 @@
         "ghcr.io/parkervcp/steamcmd:debian": "ghcr.io/parkervcp/steamcmd:debian"
     },
     "file_denylist": [],
-    "startup": "test \"${SERVER_MEMORY:-0}\" -gt 0 && test -f ProjectZomboid64.json && sed -i -E \"s/-Xmx\\w+/-Xmx$(( SERVER_MEMORY - SERVER_MEMORY / 5 ))m/\" ProjectZomboid64.json ; grep -q -- \"-Xmx\" ProjectZomboid64.json && echo \"Java heap: $(grep -oE -- \"-Xmx\\w+\" ProjectZomboid64.json)\" || echo \"WARNING: no -Xmx in ProjectZomboid64.json, heap not tied to panel memory\" ; test -f \".cache/Server/${SERVER_NAME}.ini\" && sed -i -E \"s/^MaxPlayers=\\w+/MaxPlayers=${MAX_PLAYERS}/\" \".cache/Server/${SERVER_NAME}.ini\" && echo \"Max players: ${MAX_PLAYERS}\" ; export PATH=\"./jre64/bin:$PATH\" ; export LD_LIBRARY_PATH=\"./linux64:./natives:.:./jre64/lib/amd64:${LD_LIBRARY_PATH}\" ; JSIG=\"libjsig.so\" ; LD_PRELOAD=\"${LD_PRELOAD}:${JSIG}\" ./ProjectZomboid64  -port {{SERVER_PORT}} -udpport {{STEAM_PORT}} -cachedir=/home/container/.cache -servername \"{{SERVER_NAME}}\" -adminusername {{ADMIN_USER}} -adminpassword \"{{ADMIN_PASSWORD}}\"",
+    "startup": "test \"${SERVER_MEMORY:-0}\" -gt 0 && test -f ProjectZomboid64.json && sed -i -E \"s/-Xmx\\w+/-Xmx$(( SERVER_MEMORY - SERVER_MEMORY / 20 ))m/\" ProjectZomboid64.json ; grep -q -- \"-Xmx\" ProjectZomboid64.json && echo \"Java heap: $(grep -oE -- \"-Xmx\\w+\" ProjectZomboid64.json)\" || echo \"WARNING: no -Xmx in ProjectZomboid64.json, heap not tied to panel memory\" ; test -f \".cache/Server/${SERVER_NAME}.ini\" && sed -i -E \"s/^MaxPlayers=\\w+/MaxPlayers=${MAX_PLAYERS}/\" \".cache/Server/${SERVER_NAME}.ini\" && echo \"Max players: ${MAX_PLAYERS}\" ; export PATH=\"./jre64/bin:$PATH\" ; export LD_LIBRARY_PATH=\"./linux64:./natives:.:./jre64/lib/amd64:${LD_LIBRARY_PATH}\" ; JSIG=\"libjsig.so\" ; LD_PRELOAD=\"${LD_PRELOAD}:${JSIG}\" ./ProjectZomboid64  -port {{SERVER_PORT}} -udpport {{STEAM_PORT}} -cachedir=/home/container/.cache -servername \"{{SERVER_NAME}}\" -adminusername {{ADMIN_USER}} -adminpassword \"{{ADMIN_PASSWORD}}\"",
     "config": {
         "files": "{}",
         "logs": "{}",
@@ -72,11 +72,11 @@
         },
         {
             "name": "Max Players",
-            "description": "Player cap for this server. Set by staff, applied to the server ini on every start.",
+            "description": "Maximum players. Applied to the server ini on every start, so change it here rather than in the ini.",
             "env_variable": "MAX_PLAYERS",
             "default_value": "10",
             "user_viewable": true,
-            "user_editable": false,
+            "user_editable": true,
             "rules": "required|integer|between:1,100",
             "field_type": "text"
         },
