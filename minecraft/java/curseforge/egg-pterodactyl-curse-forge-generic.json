@@ -7,7 +7,7 @@
     "exported_at": "2025-05-27T11:05:16-07:00",
     "name": "CurseForge Generic",
     "author": "contact@chromozone.dev",
-    "description": "A generic egg for a CurseForge modpack. (TeamCryptid eggs v1.0.0)",
+    "description": "A generic egg for a CurseForge modpack.",
     "features": [
         "eula",
         "java_version",

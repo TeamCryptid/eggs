@@ -7,7 +7,7 @@
     "exported_at": "2025-01-13T09:44:32+00:00",
     "name": "Modrinth Generic",
     "author": "contact@chromozone.dev",
-    "description": "A generic egg for a Modrinth modpack. (TeamCryptid eggs v1.0.0)",
+    "description": "A generic egg for a Modrinth modpack.",
     "features": [
         "eula",
         "java_version",

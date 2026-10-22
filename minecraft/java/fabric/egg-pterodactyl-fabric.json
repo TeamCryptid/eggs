@@ -7,7 +7,7 @@
     "exported_at": "2024-11-13T15:26:34+00:00",
     "name": "Fabric",
     "author": "accounts@bofanodes.io",
-    "description": "Fabric is a modular modding toolchain targeting Minecraft 1.14 and above, including snapshots. (TeamCryptid eggs v1.0.0)",
+    "description": "Fabric is a modular modding toolchain targeting Minecraft 1.14 and above, including snapshots.",
     "features": [
         "eula",
         "java_version",

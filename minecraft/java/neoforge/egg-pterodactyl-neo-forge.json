@@ -7,7 +7,7 @@
     "exported_at": "2024-11-13T15:30:48+01:00",
     "name": "NeoForge",
     "author": "glorantv@icloud.com",
-    "description": "NeoForge Server. NeoForge is a modding API (Application Programming Interface), which makes it easier to create mods, and also make sure mods are compatible with each other. NeoForge is a fork of Minecraft Forge. (TeamCryptid eggs v1.0.0)",
+    "description": "NeoForge Server. NeoForge is a modding API (Application Programming Interface), which makes it easier to create mods, and also make sure mods are compatible with each other. NeoForge is a fork of Minecraft Forge.",
     "features": [
         "eula",
         "java_version",

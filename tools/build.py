@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""build.py v1.0.1 - TeamCryptid eggs
+"""build.py - TeamCryptid eggs
 
 Builds the curated egg set from a pelican-eggs/minecraft checkout.
 Every change we make to upstream eggs lives in this file, so a resync is:
@@ -7,7 +7,7 @@ Every change we make to upstream eggs lives in this file, so a resync is:
     git clone https://github.com/pelican-eggs/minecraft.git /tmp/upstream
     python3 tools/build.py /tmp/upstream
     python3 tools/check_eggs.py
-    git diff   # review, bump EGGS_VERSION, commit, tag
+    git diff   # review, then commit
 """
 import argparse
 import datetime
@@ -19,8 +19,6 @@ import shutil
 import subprocess
 import sys
 
-BUILD_VERSION = "1.0.1"  # version of this script
-EGGS_VERSION = "1.0.0"   # release version stamped into every egg
 UPSTREAM_REPO = "https://github.com/pelican-eggs/minecraft"
 RAW_BASE = "https://raw.githubusercontent.com/TeamCryptid/eggs/main"
 JAVA25_IMAGE = "ghcr.io/pelican-eggs/yolks:java_25"
@@ -93,7 +91,7 @@ def patch_fill_script(egg, _upstream, egg_id):
     if inst.get("entrypoint") != "ash" or "alpine" not in inst.get("container", ""):
         sys.exit(f"{egg_id}: expected an alpine/ash installer, got {inst.get('container')} / {inst.get('entrypoint')}")
     script = FILL_SCRIPT.read_text()
-    script = script.replace("__PROJECT__", FILL_PROJECT[egg_id]).replace("__EGGS_VERSION__", EGGS_VERSION)
+    script = script.replace("__PROJECT__", FILL_PROJECT[egg_id])
     inst["script"] = script
 
 
@@ -114,7 +112,7 @@ PATCHES = {
 
 
 def main():
-    ap = argparse.ArgumentParser(description=f"build.py v{BUILD_VERSION}")
+    ap = argparse.ArgumentParser(description="build.py")
     ap.add_argument("upstream", type=pathlib.Path, help="path to a pelican-eggs/minecraft checkout")
     args = ap.parse_args()
     upstream = args.upstream.resolve()
@@ -135,7 +133,6 @@ def main():
             PATCHES[name](egg, upstream, egg_id)
 
         egg["meta"]["update_url"] = f"{RAW_BASE}/{dest}"
-        egg["description"] = f"{egg['description'].rstrip()} (TeamCryptid eggs v{EGGS_VERSION})"
 
         out = ROOT / dest
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -151,7 +148,6 @@ def main():
         print(f"copied {dest}")
 
     lock = {
-        "eggs_version": EGGS_VERSION,
         "upstream_repo": UPSTREAM_REPO,
         "upstream_commit": commit,
         "upstream_commit_date": commit_date,

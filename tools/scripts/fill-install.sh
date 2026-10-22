@@ -1,5 +1,5 @@
 #!/bin/ash
-# fill-install.sh v1.0.1 - TeamCryptid eggs
+# fill-install.sh - TeamCryptid eggs
 # Installs Paper or Velocity from the PaperMC Fill v3 API.
 # PROJECT is set by tools/build.py when the egg is built.
 #
@@ -16,7 +16,7 @@ PROJECT="__PROJECT__"
 : "${API_ENDPOINT:=fill.papermc.io}"
 : "${SERVER_JARFILE:=server.jar}"
 : "${BUILD_NUMBER:=latest}"
-: "${USER_AGENT:=TeamCryptid-eggs/__EGGS_VERSION__ (https://github.com/TeamCryptid/eggs)}"
+: "${USER_AGENT:=TeamCryptid-eggs (https://github.com/TeamCryptid/eggs)}"
 CONFIG_BASE="https://raw.githubusercontent.com/TeamCryptid/eggs/main/minecraft"
 API="https://${API_ENDPOINT}/v3/projects/${PROJECT}"
 

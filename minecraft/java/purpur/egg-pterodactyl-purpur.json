@@ -7,7 +7,7 @@
     "exported_at": "2024-11-20T10:52:34+01:00",
     "name": "Purpur",
     "author": "purpur@birdflop.com",
-    "description": "A drop-in replacement for Paper servers designed for configurability, and new fun and exciting gameplay features. (TeamCryptid eggs v1.0.0)",
+    "description": "A drop-in replacement for Paper servers designed for configurability, and new fun and exciting gameplay features.",
     "features": [
         "eula",
         "java_version",

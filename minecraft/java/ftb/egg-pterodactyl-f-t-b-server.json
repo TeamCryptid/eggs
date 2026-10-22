@@ -7,7 +7,7 @@
     "exported_at": "2025-02-18T18:11:44+00:00",
     "name": "FTB Server",
     "author": "runemaster580@gmail.com",
-    "description": "This egg was developed to easily set up a server from FTB. (TeamCryptid eggs v1.0.0)",
+    "description": "This egg was developed to easily set up a server from FTB.",
     "features": [
         "eula",
         "java_version",

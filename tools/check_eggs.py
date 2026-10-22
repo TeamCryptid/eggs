@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_eggs.py v1.2.0 - TeamCryptid eggs
+"""check_eggs.py - TeamCryptid eggs
 
 Validates every egg under minecraft/ before it is committed:
   - valid JSON in Pterodactyl PTDL_v2 format (imports into Jexactyl/Pterodactyl)
@@ -8,7 +8,6 @@ Validates every egg under minecraft/ before it is committed:
     config.files/config.startup are JSON strings, config.stop <= 191 chars,
     at least one docker image, env variable names valid
   - update_url points at this repo, at the file's own path
-  - description carries the current eggs version
   - install script passes a shell syntax check
   - every TeamCryptid URL a script downloads exists in this repo
 Exit code 0 = all good, 1 = at least one problem.
@@ -21,7 +20,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from build import EGGS_VERSION, RAW_BASE  # noqa: E402
+from build import RAW_BASE  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 REQUIRED = ["name", "description", "docker_images", "startup", "config", "scripts", "variables"]
@@ -70,8 +69,6 @@ def check(path):
     want_url = f"{RAW_BASE}/{rel}"
     if egg.get("meta", {}).get("update_url") != want_url:
         problems.append(f"update_url is {egg.get('meta', {}).get('update_url')}, expected {want_url}")
-    if f"(TeamCryptid eggs v{EGGS_VERSION})" not in egg.get("description", ""):
-        problems.append(f"description missing version tag v{EGGS_VERSION}")
 
     inst = egg.get("scripts", {}).get("installation", {})
     script = inst.get("script", "")
@@ -105,7 +102,7 @@ def main():
         for p in problems:
             print(f"      - {p}")
         failed += bool(problems)
-    print(f"\ncheck_eggs.py v1.2.0: {len(eggs) - failed}/{len(eggs)} eggs passed")
+    print(f"\ncheck_eggs.py: {len(eggs) - failed}/{len(eggs)} eggs passed")
     sys.exit(1 if failed else 0)
 
 
