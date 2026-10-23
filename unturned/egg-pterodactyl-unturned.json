@@ -1,0 +1,114 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+    "meta": {
+        "update_url": "https://raw.githubusercontent.com/TeamCryptid/eggs/main/unturned/egg-pterodactyl-unturned.json",
+        "version": "PTDL_v2"
+    },
+    "exported_at": "2024-06-01T00:05:03+00:00",
+    "name": "Unturned",
+    "author": "parker@parkervcp.com",
+    "description": "Vanilla Unturned with the included RockerMod.",
+    "features": [
+        "steam_disk_space"
+    ],
+    "docker_images": {
+        "ghcr.io/parkervcp/steamcmd:debian": "ghcr.io/parkervcp/steamcmd:debian"
+    },
+    "file_denylist": [],
+    "startup": "mkdir -p Modules ; for m in Rocket.Unturned OpenMod.Unturned ; do test -L \"Modules/$m\" && rm -f \"Modules/$m\" ; done ; if test \"${FRAMEWORK}\" = ldm ; then if test ! -d Extras/Rocket.Unturned ; then echo \"WARNING: Extras/Rocket.Unturned is missing, so LDM was not loaded. Reinstall the server.\" ; elif test -e Modules/Rocket.Unturned ; then echo \"WARNING: Modules/Rocket.Unturned is a real folder, so the Framework setting leaves it alone.\" ; else ln -s ../Extras/Rocket.Unturned Modules/Rocket.Unturned ; fi ; fi ; if test \"${FRAMEWORK}\" = openmod ; then if test ! -d .openmod/OpenMod.Unturned ; then echo \"WARNING: OpenMod is not downloaded yet, so it was not loaded. Reinstall the server once (Settings, Reinstall Server).\" ; elif test -e Modules/OpenMod.Unturned ; then echo \"WARNING: Modules/OpenMod.Unturned is a real folder, so the Framework setting leaves it alone.\" ; else ln -s ../.openmod/OpenMod.Unturned Modules/OpenMod.Unturned ; fi ; fi ; echo \"Framework: ${FRAMEWORK}\" ; echo \"Unturned uses UDP ports ${SERVER_PORT} (server list) and $(( SERVER_PORT + 1 )) (game). Players can join through the server list without the second one; joining by IP needs both allocated to this server.\" ; test -n \"${GSLT}\" || echo \"WARNING: No Login Token (GSLT) set. The server runs, but it is hidden from the internet server list and its Server Code changes every restart. Create one at steamcommunity.com/dev/managegameservers (app ID 304930) and enter it in Startup.\" ; ./Unturned_Headless.x86_64 -batchmode -nographics -bind 0.0.0.0 -port {{SERVER_PORT}} ${GSLT:+-GSLT \"${GSLT}\"} -Name \"{{SRV_NAME}}\" ${SRV_PW:+-Password \"${SRV_PW}\"} +InternetServer/{{SRV_ID}}",
+    "config": {
+        "files": "{}",
+        "logs": "{}",
+        "startup": "{\r\n    \"done\": \"Loading level: 100%\"\r\n}",
+        "stop": "shutdown"
+    },
+    "scripts": {
+        "installation": {
+            "container": "ghcr.io/parkervcp/installers:debian",
+            "entrypoint": "bash",
+            "script": "#!/bin/bash\n# steamcmd Base Installation Script\n#\n# Server Files: /mnt/server\n# Image to install with is 'ghcr.io/parkervcp/installers:debian'\n\n\n## just in case someone removed the defaults.\nif [[ \"${STEAM_USER}\" == \"\" ]] || [[ \"${STEAM_PASS}\" == \"\" ]]; then\n    echo -e \"steam user is not set.\\n\"\n    echo -e \"Using anonymous user.\\n\"\n    STEAM_USER=anonymous\n    STEAM_PASS=\"\"\n    STEAM_AUTH=\"\"\nelse\n    echo -e \"user set to ${STEAM_USER}\"\nfi\n\n## download and install steamcmd\ncd /tmp\nmkdir -p /mnt/server/steamcmd\ncurl -sSL -o steamcmd.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz\ntar -xzvf steamcmd.tar.gz -C /mnt/server/steamcmd\nmkdir -p /mnt/server/steamapps # Fix steamcmd disk write error when this folder is missing\ncd /mnt/server/steamcmd\n\n# SteamCMD fails otherwise for some reason, even running as root.\n# This is changed at the end of the install process anyways.\nchown -R root:root /mnt\nexport HOME=/mnt/server\n\n## install game using steamcmd\n./steamcmd.sh +force_install_dir /mnt/server +login ${STEAM_USER} ${STEAM_PASS} ${STEAM_AUTH} $( [[ \"${WINDOWS_INSTALL}\" == \"1\" ]] && printf %s '+@sSteamCmdForcePlatformType windows' ) +app_update ${SRCDS_APPID} $( [[ -z ${SRCDS_BETAID} ]] || printf %s \"-beta ${SRCDS_BETAID}\" ) $( [[ -z ${SRCDS_BETAPASS} ]] || printf %s \"-betapassword ${SRCDS_BETAPASS}\" ) ${INSTALL_FLAGS} validate +quit\n\n## set up 32 bit libraries\nmkdir -p /mnt/server/.steam/sdk32\ncp -v linux32/steamclient.so ../.steam/sdk32/steamclient.so\n\n## set up 64 bit libraries\nmkdir -p /mnt/server/.steam/sdk64\ncp -v linux64/steamclient.so ../.steam/sdk64/steamclient.so\n\n## add below your custom commands if needed\n\n## Specific to Unturned\ncd /mnt/server/\nln -sfn ../../../steamcmd/linux64/steamclient.so Unturned_Headless_Data/Plugins/x86_64/steamclient.so\n\n## TeamCryptid eggs: the Framework setting (vanilla / ldm / openmod) is applied by the startup\n## command, which links the chosen module into Modules/. LDM ships with the game in\n## Extras/Rocket.Unturned; OpenMod is downloaded here into .openmod/ (outside Modules/).\necho \"Downloading OpenMod module...\"\nrm -rf /mnt/server/.openmod.new && mkdir -p /mnt/server/.openmod.new\nif curl -sfSL -o /tmp/openmod.zip https://github.com/openmod/openmod/releases/latest/download/OpenMod.Unturned.Module.zip \\\n   && unzip -q -o /tmp/openmod.zip -d /mnt/server/.openmod.new \\\n   && [ -f /mnt/server/.openmod.new/OpenMod.Unturned/OpenMod.Unturned.module ]; then\n    rm -rf /mnt/server/.openmod && mv /mnt/server/.openmod.new /mnt/server/.openmod\n    echo \"OpenMod module ready\"\nelse\n    rm -rf /mnt/server/.openmod.new\n    if [ \"${FRAMEWORK}\" = \"openmod\" ]; then\n        echo \"ERROR: OpenMod download failed and Framework is openmod\"\n        exit 1\n    fi\n    echo \"WARNING: OpenMod download failed (only needed for Framework openmod)\"\nfi\n\n## install end\necho \"-----------------------------------------\"\necho \"Installation completed...\"\necho \"-----------------------------------------\""
+        }
+    },
+    "variables": [
+        {
+            "name": "Server Name",
+            "description": "",
+            "env_variable": "SRV_NAME",
+            "default_value": "Unturned Server",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "string|max:50",
+            "field_type": "text"
+        },
+        {
+            "name": "Server Password",
+            "description": "Server password. Leave empty for no password.",
+            "env_variable": "SRV_PW",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:64",
+            "field_type": "text"
+        },
+        {
+            "name": "Login Token (GSLT)",
+            "description": "Steam Game Server Login Token. Optional, but without one the server is hidden from the internet server list and its Server Code changes every restart. Create one at https://steamcommunity.com/dev/managegameservers with app ID 304930, one per server.",
+            "env_variable": "GSLT",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:64",
+            "field_type": "text"
+        },
+        {
+            "name": "Server ID",
+            "description": "ID of the server for savegames",
+            "env_variable": "SRV_ID",
+            "default_value": "Unturned",
+            "user_viewable": false,
+            "user_editable": false,
+            "rules": "string",
+            "field_type": "text"
+        },
+        {
+            "name": "Auto update",
+            "description": "Auto update on restart",
+            "env_variable": "AUTO_UPDATE",
+            "default_value": "1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "boolean",
+            "field_type": "text"
+        },
+        {
+            "name": "Steam App ID",
+            "description": "Steam App ID require for install and startup update",
+            "env_variable": "SRCDS_APPID",
+            "default_value": "1110390",
+            "user_viewable": false,
+            "user_editable": false,
+            "rules": "required|string|in:1110390",
+            "field_type": "text"
+        },
+        {
+            "name": "ld lib path",
+            "description": "This is needed to load specific libraries",
+            "env_variable": "LD_LIBRARY_PATH",
+            "default_value": "./Unturned_Headless_Data/Plugins/x86_64/",
+            "user_viewable": false,
+            "user_editable": false,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Framework",
+            "description": "vanilla, ldm (Legally Distinct Missile, the RocketMod fork that ships with Unturned) or openmod. Applied on restart. Servers installed before this option existed need one reinstall before openmod works.",
+            "env_variable": "FRAMEWORK",
+            "default_value": "vanilla",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|in:vanilla,ldm,openmod",
+            "field_type": "text"
+        }
+    ]
+}

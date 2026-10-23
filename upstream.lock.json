@@ -175,6 +175,18 @@
         "rust_max_players",
         "rust_startup_checks"
       ]
+    },
+    {
+      "id": "unturned",
+      "upstream": "steamcmd",
+      "upstream_path": "unturned/egg-pterodactyl-unturned.json",
+      "upstream_sha256": "62b16dd4321d906e9216a7bc29c6e889768cb4413148b33adb944cf36b778bd7",
+      "path": "unturned/egg-pterodactyl-unturned.json",
+      "patches": [
+        "unturned_install",
+        "unturned_variables",
+        "unturned_startup"
+      ]
     }
   ]
 }

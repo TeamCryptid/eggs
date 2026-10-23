@@ -72,6 +72,9 @@ EGGS = [
     ("rust", "steamcmd", "rust/vanilla/egg-pterodactyl-rust.json",
      "rust/egg-pterodactyl-rust.json",
      ["rust_ports", "rust_rcon_password", "rust_max_players", "rust_startup_checks"]),
+    ("unturned", "steamcmd", "unturned/egg-pterodactyl-unturned.json",
+     "unturned/egg-pterodactyl-unturned.json",
+     ["unturned_install", "unturned_variables", "unturned_startup"]),
 ]
 
 # Plain files the eggs download at install time, hosted here instead of upstream.
@@ -461,6 +464,102 @@ def patch_rust_startup_checks(egg, _upstream, egg_id):
     egg["startup"] = RUST_CHECK + egg["startup"]
 
 
+OPENMOD_URL = "https://github.com/openmod/openmod/releases/latest/download/OpenMod.Unturned.Module.zip"
+UNTURNED_OLD_LINKS = ("ln -s ../../../steamcmd/linux64/steamclient.so Unturned_Headless_Data/Plugins/x86_64/steamclient.so\n"
+                      "ln -s ../Extras/Rocket.Unturned/ Modules/\n")
+UNTURNED_NEW_LINKS = f"""ln -sfn ../../../steamcmd/linux64/steamclient.so Unturned_Headless_Data/Plugins/x86_64/steamclient.so
+
+## TeamCryptid eggs: the Framework setting (vanilla / ldm / openmod) is applied by the startup
+## command, which links the chosen module into Modules/. LDM ships with the game in
+## Extras/Rocket.Unturned; OpenMod is downloaded here into .openmod/ (outside Modules/).
+echo "Downloading OpenMod module..."
+rm -rf /mnt/server/.openmod.new && mkdir -p /mnt/server/.openmod.new
+if curl -sfSL -o /tmp/openmod.zip {OPENMOD_URL} \\
+   && unzip -q -o /tmp/openmod.zip -d /mnt/server/.openmod.new \\
+   && [ -f /mnt/server/.openmod.new/OpenMod.Unturned/OpenMod.Unturned.module ]; then
+    rm -rf /mnt/server/.openmod && mv /mnt/server/.openmod.new /mnt/server/.openmod
+    echo "OpenMod module ready"
+else
+    rm -rf /mnt/server/.openmod.new
+    if [ "${{FRAMEWORK}}" = "openmod" ]; then
+        echo "ERROR: OpenMod download failed and Framework is openmod"
+        exit 1
+    fi
+    echo "WARNING: OpenMod download failed (only needed for Framework openmod)"
+fi
+"""
+
+
+def patch_unturned_install(egg, _upstream, egg_id):
+    """Reinstall-safe links; Rocket link moved to startup; OpenMod module downloaded."""
+    inst = egg["scripts"]["installation"]
+    script = inst["script"].replace("\r\n", "\n")
+    if script.count(UNTURNED_OLD_LINKS) != 1:
+        sys.exit(f"{egg_id}: upstream install links changed; review the patch")
+    inst["script"] = script.replace(UNTURNED_OLD_LINKS, UNTURNED_NEW_LINKS)
+
+
+def patch_unturned_variables(egg, _upstream, egg_id):
+    """Framework option, optional login token, password that may be empty or contain spaces."""
+    g = find_var(egg, "GSLT", egg_id)
+    g.update({"name": "Login Token (GSLT)", "rules": "nullable|string|max:64",
+              "description": "Steam Game Server Login Token. Optional, but without one the server is hidden from "
+                             "the internet server list and its Server Code changes every restart. Create one at "
+                             "https://steamcommunity.com/dev/managegameservers with app ID 304930, one per server."})
+    pw = find_var(egg, "SRV_PW", egg_id)
+    pw.update({"rules": "nullable|string|max:64",
+               "description": "Server password. Leave empty for no password."})
+    if any(v["env_variable"] == "FRAMEWORK" for v in egg["variables"]):
+        sys.exit(f"{egg_id}: upstream now has a FRAMEWORK variable; review the patch")
+    egg["variables"].append({
+        "name": "Framework",
+        "description": "vanilla, ldm (Legally Distinct Missile, the RocketMod fork that ships with Unturned) "
+                       "or openmod. Applied on restart. Servers installed before this option existed need one "
+                       "reinstall before openmod works.",
+        "env_variable": "FRAMEWORK", "default_value": "vanilla",
+        "user_viewable": True, "user_editable": True,
+        "rules": "required|string|in:vanilla,ldm,openmod", "field_type": "text"})
+
+
+# Runs first on every boot. The SteamCMD image runs `echo ${STARTUP}` and `eval` unquoted, so
+# this text avoids glob characters (* ? [ ]) and backslashes. It only ever removes symlinks in
+# Modules/, never real folders a customer put there.
+UNTURNED_PREFIX = (
+    'mkdir -p Modules ; '
+    'for m in Rocket.Unturned OpenMod.Unturned ; do test -L "Modules/$m" && rm -f "Modules/$m" ; done ; '
+    'if test "${FRAMEWORK}" = ldm ; then '
+    'if test ! -d Extras/Rocket.Unturned ; then echo "WARNING: Extras/Rocket.Unturned is missing, so LDM was not loaded. Reinstall the server." ; '
+    'elif test -e Modules/Rocket.Unturned ; then echo "WARNING: Modules/Rocket.Unturned is a real folder, so the Framework setting leaves it alone." ; '
+    'else ln -s ../Extras/Rocket.Unturned Modules/Rocket.Unturned ; fi ; fi ; '
+    'if test "${FRAMEWORK}" = openmod ; then '
+    'if test ! -d .openmod/OpenMod.Unturned ; then echo "WARNING: OpenMod is not downloaded yet, so it was not loaded. Reinstall the server once (Settings, Reinstall Server)." ; '
+    'elif test -e Modules/OpenMod.Unturned ; then echo "WARNING: Modules/OpenMod.Unturned is a real folder, so the Framework setting leaves it alone." ; '
+    'else ln -s ../.openmod/OpenMod.Unturned Modules/OpenMod.Unturned ; fi ; fi ; '
+    'echo "Framework: ${FRAMEWORK}" ; '
+    'echo "Unturned uses UDP ports ${SERVER_PORT} (server list) and $(( SERVER_PORT + 1 )) (game). '
+    'Players can join through the server list without the second one; joining by IP needs both allocated to this server." ; '
+    'test -n "${GSLT}" || echo "WARNING: No Login Token (GSLT) set. The server runs, but it is hidden from the internet '
+    'server list and its Server Code changes every restart. Create one at steamcommunity.com/dev/managegameservers '
+    '(app ID 304930) and enter it in Startup." ; '
+)
+
+
+def patch_unturned_startup(egg, _upstream, egg_id):
+    """Framework links, port and token messages; pass -GSLT and -Password only when set, quoted."""
+    st = egg["startup"]
+    for old in ("-GSLT {{GSLT}}", "-Password {{SRV_PW}}"):
+        if st.count(old) != 1:
+            sys.exit(f"{egg_id}: upstream startup no longer has {old!r}; review the patch")
+    if not st.startswith("./Unturned_Headless.x86_64 "):
+        sys.exit(f"{egg_id}: upstream startup changed; review the patch")
+    st = st.replace("-GSLT {{GSLT}}", '${GSLT:+-GSLT "${GSLT}"}')
+    st = st.replace("-Password {{SRV_PW}}", '${SRV_PW:+-Password "${SRV_PW}"}')
+    bad = set(UNTURNED_PREFIX) & set("*?[]\\")
+    if bad:
+        sys.exit(f"{egg_id}: startup prefix contains unsafe characters {sorted(bad)}")
+    egg["startup"] = UNTURNED_PREFIX + st
+
+
 PATCHES = {
     "java25": patch_java25,
     "modrinth_script": patch_modrinth_script,
@@ -482,6 +581,9 @@ PATCHES = {
     "rust_rcon_password": patch_rust_rcon_password,
     "rust_max_players": patch_rust_max_players,
     "rust_startup_checks": patch_rust_startup_checks,
+    "unturned_install": patch_unturned_install,
+    "unturned_variables": patch_unturned_variables,
+    "unturned_startup": patch_unturned_startup,
 }
 
 

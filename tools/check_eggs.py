@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """check_eggs.py - TeamCryptid eggs
 
-Validates every egg (minecraft/, zomboid/, valheim/, hytale/, rust/) before it is committed:
+Validates every egg (minecraft/, zomboid/, valheim/, hytale/, rust/, unturned/) before it is committed:
   - valid JSON in Pterodactyl PTDL_v2 format (imports into Jexactyl/Pterodactyl)
   - required fields present, variable rules in Pterodactyl's string form
   - the panel's own model rules (Jexactyl app/Models/Egg.php): author is an email,
@@ -23,7 +23,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from build import RAW_BASE  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-EGG_DIRS = ["minecraft", "zomboid", "valheim", "hytale", "rust"]
+EGG_DIRS = ["minecraft", "zomboid", "valheim", "hytale", "rust", "unturned"]
 REQUIRED = ["name", "description", "docker_images", "startup", "config", "scripts", "variables"]
 
 
