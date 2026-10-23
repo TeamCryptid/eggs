@@ -29,6 +29,8 @@ JAVA25_IMAGE = "ghcr.io/pelican-eggs/yolks:java_25"
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FILL_SCRIPT = ROOT / "tools" / "scripts" / "fill-install.sh"
+VALHEIM_BEPINEX_SCRIPT = ROOT / "tools" / "scripts" / "valheim-bepinex.sh"
+VALHEIM_PLUS_SCRIPT = ROOT / "tools" / "scripts" / "valheim-plus.sh"
 
 # id, upstream, upstream source path, destination path in this repo, patches applied
 EGGS = [
@@ -53,6 +55,15 @@ EGGS = [
     ("zomboid", "steamcmd", "project_zomboid/egg-pterodactyl-project-zomboid.json",
      "zomboid/egg-pterodactyl-project-zomboid.json",
      ["zomboid_startup", "zomboid_max_players", "zomboid_steam_port"]),
+    ("valheim", "steamcmd", "valheim/valheim_vanilla/egg-pterodactyl-valheim.json",
+     "valheim/vanilla/egg-pterodactyl-valheim.json",
+     ["valheim_startup", "valheim_password_text"]),
+    ("valheim-bepinex", "steamcmd", "valheim/valheim_bepinex/egg-pterodactyl-valheim-bep-i-nex.json",
+     "valheim/bepinex/egg-pterodactyl-valheim-bep-i-nex.json",
+     ["valheim_startup", "valheim_password_text", "valheim_bepinex_install", "valheim_modpack_text"]),
+    ("valheim-plus", "steamcmd", "valheim/valheim_plus/egg-pterodactyl-valheim-plus-mod.json",
+     "valheim/plus/egg-pterodactyl-valheim-plus-mod.json",
+     ["valheim_plus_doorstop", "valheim_startup", "valheim_password_text", "valheim_plus_install"]),
 ]
 
 # Plain files the eggs download at install time, hosted here instead of upstream.
@@ -241,6 +252,92 @@ def patch_forge_launch_detect(egg, _upstream, egg_id):
     inst["script"] = script
 
 
+# Runs before the upstream Valheim startup on every boot (after any auto-update).
+# 1. States the second port: Valheim always uses -port and -port + 1, and has no setting
+#    for the second one, so both must be allocated to the server.
+# 2. Warns (does not block) when the password appears in the world or server name.
+#    Valheim refuses such passwords with "Error bad password" and exits; sources disagree
+#    on which name it checks, so this only explains, and the game still decides.
+# The image entrypoint runs `echo -e ${STARTUP}` then `eval` unquoted, so this text must
+# not contain glob characters (* ? [ ]) or backslashes; the patch refuses to build if it does.
+VALHEIM_PREFIX = (
+    'echo "Valheim uses UDP ports ${SERVER_PORT} and $(( SERVER_PORT + 1 )). '
+    'Both must be allocated to this server." ; '
+    '{ printf %s "${WORLD}" | grep -qF -- "${PASSWORD}" || '
+    'printf %s "${SERVER_NAME}" | grep -qF -- "${PASSWORD}" ; } && '
+    'echo "WARNING: the server password appears in the world name or the server name. '
+    'Valheim may refuse it and stop with: Error bad password. '
+    'Change the password on the Startup page if the server does not start." ; '
+)
+VALHEIM_STEAMCMD_END = "cp -v linux64/steamclient.so ../.steam/sdk64/steamclient.so"
+
+# Doorstop 4 launcher settings, exactly as start_server_bepinex.sh in the current BepInExPack
+# and ValheimPlus releases sets them (both ship Doorstop 4.4.0).
+DOORSTOP4_ENV = (
+    'export DOORSTOP_ENABLED=1; '
+    'export DOORSTOP_TARGET_ASSEMBLY=./BepInEx/core/BepInEx.Preloader.dll; '
+    'export LD_LIBRARY_PATH="./doorstop_libs:$LD_LIBRARY_PATH"; '
+    'export LD_PRELOAD="libdoorstop_x64.so:$LD_PRELOAD"; '
+    'export LD_LIBRARY_PATH="./linux64:$LD_LIBRARY_PATH"; '
+    'export SteamAppId=892970; '
+)
+
+
+def patch_valheim_startup(egg, _upstream, egg_id):
+    """Show the two-port requirement and warn about passwords Valheim will refuse."""
+    if "./valheim_server.x86_64" not in egg["startup"] or '"{{PASSWORD}}"' not in egg["startup"]:
+        sys.exit(f"{egg_id}: upstream startup changed; review the patch")
+    bad = set(VALHEIM_PREFIX) & set("*?[]\\")
+    if bad:
+        sys.exit(f"{egg_id}: startup prefix contains unsafe characters {sorted(bad)}")
+    egg["startup"] = VALHEIM_PREFIX + egg["startup"]
+
+
+def patch_valheim_password_text(egg, _upstream, egg_id):
+    """Say up front which passwords Valheim refuses."""
+    v = find_var(egg, "PASSWORD", egg_id)
+    v["description"] = ("Server password, at least 5 characters. Must not appear inside the world name "
+                        "or the server name, or Valheim refuses it and stops.")
+
+
+def splice_valheim_install(egg, egg_id, script_path):
+    """Keep upstream's SteamCMD install, replace everything after it with our script."""
+    inst = egg["scripts"]["installation"]
+    script = inst["script"].replace("\r\n", "\n")
+    if script.count(VALHEIM_STEAMCMD_END) != 1:
+        sys.exit(f"{egg_id}: SteamCMD end marker not found exactly once; review the patch")
+    head = script.split(VALHEIM_STEAMCMD_END)[0] + VALHEIM_STEAMCMD_END + "\n\n"
+    inst["script"] = head + script_path.read_text()
+
+
+def patch_valheim_bepinex_install(egg, _upstream, egg_id):
+    """Fail on errors, follow nested modpack dependencies, keep all mod files and configs."""
+    splice_valheim_install(egg, egg_id, VALHEIM_BEPINEX_SCRIPT)
+
+
+def patch_valheim_modpack_text(egg, _upstream, egg_id):
+    v = find_var(egg, "V_MODPACK", egg_id)
+    v["description"] = ("Thunderstore modpack to install, as Author-PackName (latest version) or "
+                        "Author-PackName-1.2.3 (that version). Packs inside the pack are followed. "
+                        "Leave blank for BepInEx only. Changing this needs a server reinstall; "
+                        "it replaces BepInEx/plugins, and existing configs are kept.")
+
+
+def patch_valheim_plus_doorstop(egg, _upstream, egg_id):
+    """ValheimPlus now ships Doorstop 4, which ignores the Doorstop 3 settings upstream exports.
+    Must run before valheim_startup, because it replaces everything before the server binary."""
+    start = egg["startup"]
+    cut = start.find("./valheim_server.x86_64")
+    if cut < 0 or "DOORSTOP_INVOKE_DLL_PATH" not in start[:cut] or start.startswith(VALHEIM_PREFIX):
+        sys.exit(f"{egg_id}: upstream startup no longer uses Doorstop 3 settings; review the patch")
+    egg["startup"] = DOORSTOP4_ENV + start[cut:]
+
+
+def patch_valheim_plus_install(egg, _upstream, egg_id):
+    """Direct release download, fail on errors, keep configs."""
+    splice_valheim_install(egg, egg_id, VALHEIM_PLUS_SCRIPT)
+
+
 PATCHES = {
     "java25": patch_java25,
     "modrinth_script": patch_modrinth_script,
@@ -250,6 +347,12 @@ PATCHES = {
     "zomboid_startup": patch_zomboid_startup,
     "zomboid_max_players": patch_zomboid_max_players,
     "zomboid_steam_port": patch_zomboid_steam_port,
+    "valheim_startup": patch_valheim_startup,
+    "valheim_password_text": patch_valheim_password_text,
+    "valheim_bepinex_install": patch_valheim_bepinex_install,
+    "valheim_modpack_text": patch_valheim_modpack_text,
+    "valheim_plus_doorstop": patch_valheim_plus_doorstop,
+    "valheim_plus_install": patch_valheim_plus_install,
 }
 
 

@@ -109,6 +109,43 @@
         "zomboid_max_players",
         "zomboid_steam_port"
       ]
+    },
+    {
+      "id": "valheim",
+      "upstream": "steamcmd",
+      "upstream_path": "valheim/valheim_vanilla/egg-pterodactyl-valheim.json",
+      "upstream_sha256": "b6e8cdf200763bee1ea447527cbefc5265bb0238f7878c08565741660e2ad29e",
+      "path": "valheim/vanilla/egg-pterodactyl-valheim.json",
+      "patches": [
+        "valheim_startup",
+        "valheim_password_text"
+      ]
+    },
+    {
+      "id": "valheim-bepinex",
+      "upstream": "steamcmd",
+      "upstream_path": "valheim/valheim_bepinex/egg-pterodactyl-valheim-bep-i-nex.json",
+      "upstream_sha256": "a46bcce17f4244fd34812e675c00b846778aff9b42fb169aa0680ae817698e11",
+      "path": "valheim/bepinex/egg-pterodactyl-valheim-bep-i-nex.json",
+      "patches": [
+        "valheim_startup",
+        "valheim_password_text",
+        "valheim_bepinex_install",
+        "valheim_modpack_text"
+      ]
+    },
+    {
+      "id": "valheim-plus",
+      "upstream": "steamcmd",
+      "upstream_path": "valheim/valheim_plus/egg-pterodactyl-valheim-plus-mod.json",
+      "upstream_sha256": "74f6e99bd6c1bcc38954492b5abecea682e4d00d3c25a7b6d33e0f9d86089f2a",
+      "path": "valheim/plus/egg-pterodactyl-valheim-plus-mod.json",
+      "patches": [
+        "valheim_plus_doorstop",
+        "valheim_startup",
+        "valheim_password_text",
+        "valheim_plus_install"
+      ]
     }
   ]
 }

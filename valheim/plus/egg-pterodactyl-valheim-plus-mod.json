@@ -1,0 +1,224 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": "https://raw.githubusercontent.com/TeamCryptid/eggs/main/valheim/plus/egg-pterodactyl-valheim-plus-mod.json"
+    },
+    "exported_at": "2026-01-03T15:23:08+00:00",
+    "name": "Valheim Plus Mod",
+    "author": "eggs@goover.dev",
+    "description": "A brutal exploration and survival game for 1-10 players, set in a procedurally-generated purgatory inspired by viking culture.",
+    "features": [
+        "steam_disk_space"
+    ],
+    "docker_images": {
+        "ghcr.io/parkervcp/games:valheim": "ghcr.io/parkervcp/games:valheim"
+    },
+    "file_denylist": [],
+    "startup": "echo \"Valheim uses UDP ports ${SERVER_PORT} and $(( SERVER_PORT + 1 )). Both must be allocated to this server.\" ; { printf %s \"${WORLD}\" | grep -qF -- \"${PASSWORD}\" || printf %s \"${SERVER_NAME}\" | grep -qF -- \"${PASSWORD}\" ; } && echo \"WARNING: the server password appears in the world name or the server name. Valheim may refuse it and stop with: Error bad password. Change the password on the Startup page if the server does not start.\" ; export DOORSTOP_ENABLED=1; export DOORSTOP_TARGET_ASSEMBLY=./BepInEx/core/BepInEx.Preloader.dll; export LD_LIBRARY_PATH=\"./doorstop_libs:$LD_LIBRARY_PATH\"; export LD_PRELOAD=\"libdoorstop_x64.so:$LD_PRELOAD\"; export LD_LIBRARY_PATH=\"./linux64:$LD_LIBRARY_PATH\"; export SteamAppId=892970; ./valheim_server.x86_64 -nographics -batchmode -name \"{{SERVER_NAME}}\" -port {{SERVER_PORT}} -world \"{{WORLD}}\" -password \"{{PASSWORD}}\" -public {{PUBLIC_SERVER}} -saveinterval {{BACKUP_INTERVAL}} -backups {{BACKUP_COUNT}} -backupshort {{BACKUP_SHORTTIME}} -backuplong {{BACKUP_LONGTIME}} $( [[ {{ENABLE_CROSSPLAY}} -eq 1 ]] && echo \" -crossplay \") > >(sed -uE \"{{CONSOLE_FILTER}}\")",
+    "config": {
+        "files": "{}",
+        "startup": "{\n    \"done\": \"DungeonDB Start\"\n}",
+        "logs": "{}",
+        "stop": "^C"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/bash\n# steamcmd Base Installation Script\n\nclear\nRED='\\033[0;31m'\nGREEN='\\033[0;32m'\nYELLOW='\\033[1;33m'\nBLUE='\\033[0;34m'\nNC='\\033[0m'\necho -e \"${BLUE}-------------------------------------------------${NC}\"\necho -e \"${YELLOW}Valheim+ Installscript${NC}\"\necho -e \"${BLUE}-------------------------------------------------${NC}\"\n\n# Install packages. Default packages below are not required if using our existing install image thus speeding up the install process.\napt -y update\napt -y --no-install-recommends install curl lib32gcc-s1 ca-certificates jq wget\n\n## just in case someone removed the defaults.\nif [[ \"${STEAM_USER}\" == \"\" ]] || [[ \"${STEAM_PASS}\" == \"\" ]]; then\n    echo -e \"steam user is not set.\\n\"\n    echo -e \"Using anonymous user.\\n\"\n    STEAM_USER=anonymous\n    STEAM_PASS=\"\"\n    STEAM_AUTH=\"\"\nelse\n    echo -e \"user set to ${STEAM_USER}\"\nfi\n\necho -e \"${BLUE}-------------------------------------------------${NC}\"\necho -e \"${YELLOW}download and install steamcmd${NC}\"\necho -e \"${BLUE}-------------------------------------------------${NC}\"\n\n## download and install steamcmd\ncd /tmp\nmkdir -p /mnt/server/steamcmd\ncurl -sSL -o steamcmd.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz\ntar -xzvf steamcmd.tar.gz -C /mnt/server/steamcmd\nmkdir -p /mnt/server/steamapps # Fix steamcmd disk write error when this folder is missing\ncd /mnt/server/steamcmd\n\n# SteamCMD fails otherwise for some reason, even running as root.\n# This is changed at the end of the install process anyways.\nchown -R root:root /mnt\nexport HOME=/mnt/server\necho -e \"${GREEN}...done${NC}\"\n\necho -e \"${BLUE}-------------------------------------------------${NC}\"\necho -e \"${YELLOW}install Valheim with SteamCMD${NC}\"\necho -e \"${BLUE}-------------------------------------------------${NC}\"\n\n## install game using steamcmd\n./steamcmd.sh +force_install_dir /mnt/server +login ${STEAM_USER} ${STEAM_PASS} ${STEAM_AUTH} $( [[ \"${WINDOWS_INSTALL}\" == \"1\" ]] && printf %s '+@sSteamCmdForcePlatformType windows' ) +app_update ${SRCDS_APPID} $( [[ -z ${SRCDS_BETAID} ]] || printf %s \"-beta ${SRCDS_BETAID}\" ) $( [[ -z ${SRCDS_BETAPASS} ]] || printf %s \"-betapassword ${SRCDS_BETAPASS}\" ) ${INSTALL_FLAGS} validate +quit ## other flags may be needed depending on install. looking at you cs 1.6\n\n## set up 32 bit libraries\nmkdir -p /mnt/server/.steam/sdk32\ncp -v linux32/steamclient.so ../.steam/sdk32/steamclient.so\n\n## set up 64 bit libraries\nmkdir -p /mnt/server/.steam/sdk64\ncp -v linux64/steamclient.so ../.steam/sdk64/steamclient.so\n\n## ---------------------------------------------------------------------------\n## TeamCryptid eggs: ValheimPlus install for Valheim.\n## tools/build.py appends this to the upstream SteamCMD part of the install.\n##\n## Changes from upstream (pelican-eggs/games-steamcmd, MIT):\n##   - downloads the release asset directly instead of through the GitHub API\n##     (no unauthenticated API rate limit; no jq parsing of release lists)\n##   - an unknown VERSION fails the install instead of silently installing\n##     whatever the latest release is\n##   - any failed download or extract fails the install (upstream always\n##     reported \"Installation completed\")\n##   - configs in BepInEx/config are kept across a reinstall\n## ---------------------------------------------------------------------------\n\nfatal() {\n    echo -e \"\\nERROR: $*\\n\"\n    exit 1\n}\n\nWORK=$(mktemp -d)\ncd /mnt/server || fatal \"cannot enter /mnt/server\"\n\nif [ -z \"${VERSION}\" ] || [ \"${VERSION}\" = \"latest\" ]; then\n    DOWNLOAD_LINK=\"https://github.com/${GITHUB_PACKAGE}/releases/latest/download/${MATCH}\"\nelse\n    DOWNLOAD_LINK=\"https://github.com/${GITHUB_PACKAGE}/releases/download/${VERSION}/${MATCH}\"\nfi\n\necho \"-------------------------------------------------\"\necho \"downloading ValheimPlus: ${DOWNLOAD_LINK}\"\necho \"-------------------------------------------------\"\ncurl -sfSL -o \"${WORK}/vplus.zip\" \"${DOWNLOAD_LINK}\" || fatal \"ValheimPlus download failed (${GITHUB_PACKAGE}, version ${VERSION:-latest})\"\n\n# Keep existing configs (BepInEx.cfg, valheim_plus.cfg) so a reinstall does not reset them.\nif [ -d BepInEx/config ]; then\n    cp -a BepInEx/config \"${WORK}/config.keep\"\nfi\n\nunzip -q -o \"${WORK}/vplus.zip\" -d /mnt/server || fatal \"ValheimPlus archive is damaged\"\n[ -f BepInEx/core/BepInEx.Preloader.dll ] || fatal \"ValheimPlus archive has no BepInEx preloader\"\n\nif [ -d \"${WORK}/config.keep\" ]; then\n    cp -a \"${WORK}/config.keep/.\" BepInEx/config/\n    echo \"kept existing BepInEx/config\"\nfi\n\nrm -rf \"${WORK}\"\n\necho \"-------------------------------------------------\"\necho \"Installation completed\"\necho \"-------------------------------------------------\"\n",
+            "container": "ghcr.io/parkervcp/installers:debian",
+            "entrypoint": "bash"
+        }
+    },
+    "variables": [
+        {
+            "name": "Auto Update",
+            "description": "",
+            "env_variable": "AUTO_UPDATE",
+            "default_value": "1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "boolean",
+            "field_type": "text"
+        },
+        {
+            "name": "Backup Count",
+            "description": "Sets how many automatic backups will be kept. The first is the 'short' backup length, and the rest are the 'long' backup length. When default values are used means one backup that is 2 hours old, and 3 backups that are 12 hours apart. Default: 4.",
+            "env_variable": "BACKUP_COUNT",
+            "default_value": "4",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|numeric|min:0",
+            "field_type": "text"
+        },
+        {
+            "name": "Backup Interval",
+            "description": "Change how often the world will save in seconds. Default: 1800 (30 minutes).",
+            "env_variable": "BACKUP_INTERVAL",
+            "default_value": "1800",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|numeric|min:0",
+            "field_type": "text"
+        },
+        {
+            "name": "Backup Longtime",
+            "description": "Sets the interval between the subsequent automatic backups in seconds. Default: 43200 (12 hours).",
+            "env_variable": "BACKUP_LONGTIME",
+            "default_value": "43200",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|numeric|min:0",
+            "field_type": "text"
+        },
+        {
+            "name": "Backup Shorttime",
+            "description": "Sets the interval between the first automatic backups in seconds. Default: 7200 (2 hours).",
+            "env_variable": "BACKUP_SHORTTIME",
+            "default_value": "7200",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|numeric|min:0",
+            "field_type": "text"
+        },
+        {
+            "name": "[System] Console Filter",
+            "description": "Remove unwanted outputs from the console.",
+            "env_variable": "CONSOLE_FILTER",
+            "default_value": "/^\\(Filename:.*Line:[[:space:]]+[[:digit:]]+\\)$/d; /^([[:space:]]+)?$/d",
+            "user_viewable": false,
+            "user_editable": false,
+            "rules": "string",
+            "field_type": "text"
+        },
+        {
+            "name": "Enable Crossplay",
+            "description": "Enable crossplay support",
+            "env_variable": "ENABLE_CROSSPLAY",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "boolean",
+            "field_type": "text"
+        },
+        {
+            "name": "[System] Filter",
+            "description": "",
+            "env_variable": "FILTER",
+            "default_value": "/^\\(Filename:.*Line:[[:space:]]+[[:digit:]]+\\)$/d; /^([[:space:]]+)?$/d",
+            "user_viewable": false,
+            "user_editable": false,
+            "rules": "string",
+            "field_type": "text"
+        },
+        {
+            "name": "[V+] Github Package",
+            "description": "",
+            "env_variable": "GITHUB_PACKAGE",
+            "default_value": "Grantapher/ValheimPlus",
+            "user_viewable": false,
+            "user_editable": false,
+            "rules": "required|string|max:40",
+            "field_type": "text"
+        },
+        {
+            "name": "[System] LD Library Path",
+            "description": "Required to load server libraries.",
+            "env_variable": "LD_LIBRARY_PATH",
+            "default_value": "./linux64",
+            "user_viewable": false,
+            "user_editable": false,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "[V+] MATCH",
+            "description": "",
+            "env_variable": "MATCH",
+            "default_value": "UnixServer.zip",
+            "user_viewable": false,
+            "user_editable": false,
+            "rules": "required|string|max:20",
+            "field_type": "text"
+        },
+        {
+            "name": "Server Password",
+            "description": "Server password, at least 5 characters. Must not appear inside the world name or the server name, or Valheim refuses it and stops.",
+            "env_variable": "PASSWORD",
+            "default_value": "secret",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|min:5|max:20",
+            "field_type": "text"
+        },
+        {
+            "name": "Public Server",
+            "description": "Public visibility of your server. Set it to false to make the server invisible and only joinable via the 'Join IP'-button.",
+            "env_variable": "PUBLIC_SERVER",
+            "default_value": "1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "boolean",
+            "field_type": "text"
+        },
+        {
+            "name": "Server Name",
+            "description": "Name that appears in server browser.",
+            "env_variable": "SERVER_NAME",
+            "default_value": "My Server",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:60",
+            "field_type": "text"
+        },
+        {
+            "name": "[System] Steam AppID",
+            "description": "Valheim steam app id for auto updates.",
+            "env_variable": "SRCDS_APPID",
+            "default_value": "896660",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "Beta Branch",
+            "description": "",
+            "env_variable": "SRCDS_BETAID",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "max:30",
+            "field_type": "text"
+        },
+        {
+            "name": "Beta Password",
+            "description": "",
+            "env_variable": "SRCDS_BETAPASS",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "max:30",
+            "field_type": "text"
+        },
+        {
+            "name": "[V+] Version",
+            "description": "",
+            "env_variable": "VERSION",
+            "default_value": "latest",
+            "user_viewable": false,
+            "user_editable": false,
+            "rules": "required|string|max:20",
+            "field_type": "text"
+        },
+        {
+            "name": "World Name",
+            "description": "Name to load if switching between multiple saved worlds.",
+            "env_variable": "WORLD",
+            "default_value": "Dedicated",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:20",
+            "field_type": "text"
+        }
+    ]
+}
