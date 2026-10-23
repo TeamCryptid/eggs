@@ -159,28 +159,39 @@ def patch_zomboid_max_players(egg, _upstream, egg_id):
 
 
 ZOMBOID_UPSTREAM_UDPPORT = "-udpport {{STEAM_PORT}}"
-ZOMBOID_UDPPORT = "-udpport $(( SERVER_PORT + 1 ))"
-# Printed on every boot. The container can't see which allocations exist, so this is a reminder.
-ZOMBOID_PORT_NOTICE = (
-    'echo "Ports: UDP ${SERVER_PORT} and UDP $(( SERVER_PORT + 1 )). '
-    'Both must be allocations on this server or players cannot connect." ; '
+ZOMBOID_PORT_NAME = "Second UDP Port"
+# Runs first on every boot. The container only knows its primary allocation, so the customer
+# adds a second allocation in the Network tab and enters its port in STEAM_PORT. If it's empty
+# or the same as the primary, stop with a bold red message. "\33\133" is ESC + "[" written in
+# octal: the entrypoint's unquoted echo forbids a literal "[" (glob character), and the
+# two-digit "\33" isn't decoded by the entrypoint's "echo -e" of the command line.
+ZOMBOID_PORT_CHECK = (
+    'test -n "${STEAM_PORT}" && test "${STEAM_PORT}" != "${SERVER_PORT}" || { '
+    'printf "\\33\\1331;31mERROR: Project Zomboid needs a second port. '
+    'Open the Network tab, click Create Allocation, enter the new port in Startup > '
+    + ZOMBOID_PORT_NAME + ', then restart.\\33\\1330m\\n" ; exit 1 ; } ; '
+    'echo "Ports: game UDP ${SERVER_PORT}, second UDP ${STEAM_PORT}" ; '
 )
 
 
 def patch_zomboid_steam_port(egg, _upstream, egg_id):
-    """Ports come from allocations only: second UDP port = primary allocation + 1, no variable."""
-    find_var(egg, "STEAM_PORT", egg_id)
-    if egg["startup"].count(ZOMBOID_UPSTREAM_UDPPORT) != 1 or egg["startup"].count(ZOMBOID_UPSTREAM_START) != 1:
+    """Second UDP port: customer adds an allocation and enters it; startup refuses if missing."""
+    v = find_var(egg, "STEAM_PORT", egg_id)
+    if egg["startup"].count(ZOMBOID_UPSTREAM_UDPPORT) != 1:
         sys.exit(f"{egg_id}: upstream startup port arguments changed; review the patch")
-    bad = set(ZOMBOID_PORT_NOTICE + ZOMBOID_UDPPORT) & set("*?[]")
+    bad = set(ZOMBOID_PORT_CHECK) & set("*?[]")
     if bad:
-        sys.exit(f"{egg_id}: port patch contains glob characters {sorted(bad)}")
-    egg["startup"] = (egg["startup"]
-                      .replace(ZOMBOID_UPSTREAM_UDPPORT, ZOMBOID_UDPPORT)
-                      .replace(ZOMBOID_UPSTREAM_START, ZOMBOID_PORT_NOTICE + ZOMBOID_UPSTREAM_START))
-    egg["variables"] = [v for v in egg["variables"] if v["env_variable"] != "STEAM_PORT"]
-    if "STEAM_PORT" in egg["startup"]:
-        sys.exit(f"{egg_id}: STEAM_PORT still referenced in startup")
+        sys.exit(f"{egg_id}: port check contains glob characters {sorted(bad)}")
+    v.update({
+        "name": ZOMBOID_PORT_NAME,
+        "description": "Add an allocation in the Network tab, then enter its port here. "
+                       "Must be different from the primary port.",
+        "default_value": "",
+        "user_viewable": True,
+        "user_editable": True,
+        "rules": "nullable|integer|between:1024,65535",
+    })
+    egg["startup"] = ZOMBOID_PORT_CHECK + egg["startup"]
 
 
 FORGE_OLD_DETECT = """# Check if we need a symlink for 1.17+ Forge JPMS args
