@@ -11,7 +11,7 @@
       "commit_date": "2026-10-18T08:42:59-04:00"
     }
   },
-  "built": "2026-10-22",
+  "built": "2026-10-23",
   "eggs": [
     {
       "id": "neoforge",
@@ -28,7 +28,8 @@
       "upstream_sha256": "58a0c50686dd8ca334ac367e25af751eff0074dc5ad52362b3dfe7833a03cf97",
       "path": "minecraft/java/forge/pterodactyl-egg-forge-minecraft.json",
       "patches": [
-        "java25"
+        "java25",
+        "forge_launch_detect"
       ]
     },
     {

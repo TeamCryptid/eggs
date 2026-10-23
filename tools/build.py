@@ -35,7 +35,7 @@ EGGS = [
     ("neoforge", "minecraft", "java/neoforge/egg-pterodactyl-neo-forge.json",
      "minecraft/java/neoforge/egg-pterodactyl-neo-forge.json", []),
     ("forge", "minecraft", "java/forge/pterodactyl-egg-forge-minecraft.json",
-     "minecraft/java/forge/pterodactyl-egg-forge-minecraft.json", ["java25"]),
+     "minecraft/java/forge/pterodactyl-egg-forge-minecraft.json", ["java25", "forge_launch_detect"]),
     ("fabric", "minecraft", "java/fabric/egg-pterodactyl-fabric.json",
      "minecraft/java/fabric/egg-pterodactyl-fabric.json", []),
     ("curseforge", "minecraft", "java/curseforge/egg-pterodactyl-curse-forge-generic.json",
@@ -169,11 +169,59 @@ def patch_zomboid_steam_port(egg, _upstream, egg_id):
     })
 
 
+FORGE_OLD_DETECT = """# Check if we need a symlink for 1.17+ Forge JPMS args
+if [[ $MC_VERSION =~ ^1\\.(17|18|19|20|21|22|23) || $FORGE_VERSION =~ ^1\\.(17|18|19|20|21|22|23) ]]; then
+  unix_args
+
+# Check if someone has set MC to latest but overwrote it with older Forge version, otherwise we would have false positives
+elif [[ $MC_VERSION == "latest" && $FORGE_VERSION =~ ^1\\.(17|18|19|20|21|22|23) ]]; then
+  unix_args
+else
+  # For versions below 1.17 that ship with jar
+  mv $FORGE_JAR $SERVER_JARFILE
+fi"""
+
+FORGE_NEW_DETECT = """# Forge 1.17+ writes libraries/net/minecraftforge/forge/<version>/unix_args.txt; older Forge ships a jar.
+# Decide by what the installer produced, not by version number: Minecraft moved to 26.x versioning,
+# which the old 1.17-1.23 regex sent down the old-jar branch, leaving neither file and an unbootable server.
+if compgen -G "libraries/net/minecraftforge/forge/*/unix_args.txt" > /dev/null; then
+  unix_args
+elif compgen -G "$FORGE_JAR" > /dev/null; then
+  # For versions below 1.17 that ship with jar
+  mv $FORGE_JAR $SERVER_JARFILE
+else
+  echo -e "Install failed: Forge ${FORGE_VERSION} produced neither unix_args.txt nor ${FORGE_JAR}."
+  exit 5
+fi"""
+
+FORGE_FIXES = [
+    # the launch-file detection above
+    (FORGE_OLD_DETECT, FORGE_NEW_DETECT),
+    # a failed download exited 0, so the panel reported a successful install
+    ('echo "!!! Error downloading forge version ${FORGE_VERSION} !!!"\n  exit\n',
+     'echo "!!! Error downloading forge version ${FORGE_VERSION} !!!"\n  exit 1\n'),
+    # failure message printed an undefined variable
+    ("and Minecraft version ${MINECRAFT_VERSION}.", "and Minecraft version ${MC_VERSION}."),
+]
+
+
+def patch_forge_launch_detect(egg, _upstream, egg_id):
+    """Set up the launch files by what the Forge installer produced, and fail loudly if neither exists."""
+    inst = egg["scripts"]["installation"]
+    script = inst["script"].replace("\r\n", "\n")
+    for old, new in FORGE_FIXES:
+        if old not in script:
+            sys.exit(f"{egg_id}: upstream install script changed near {old.splitlines()[0][:60]!r}; review the patch")
+        script = script.replace(old, new)
+    inst["script"] = script
+
+
 PATCHES = {
     "java25": patch_java25,
     "modrinth_script": patch_modrinth_script,
     "fill_script": patch_fill_script,
     "server_properties_url": patch_server_properties_url,
+    "forge_launch_detect": patch_forge_launch_detect,
     "zomboid_startup": patch_zomboid_startup,
     "zomboid_max_players": patch_zomboid_max_players,
     "zomboid_steam_port": patch_zomboid_steam_port,
