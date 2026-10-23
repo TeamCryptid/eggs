@@ -9,6 +9,11 @@
       "repo": "https://github.com/pelican-eggs/games-steamcmd",
       "commit": "68aa3847dda477c9e5cb0522295b212042f746af",
       "commit_date": "2026-10-18T08:42:59-04:00"
+    },
+    "standalone": {
+      "repo": "https://github.com/pelican-eggs/games-standalone",
+      "commit": "e1b52607397c0de9d6918d0659f1ff95721d3b49",
+      "commit_date": "2026-10-13T14:28:55-07:00"
     }
   },
   "built": "2026-10-23",
@@ -145,6 +150,17 @@
         "valheim_startup",
         "valheim_password_text",
         "valheim_plus_install"
+      ]
+    },
+    {
+      "id": "hytale",
+      "upstream": "standalone",
+      "upstream_path": "hytale/pterodactyl-egg-hytale.json",
+      "upstream_sha256": "225f038a2273f01897d3152c0ae175c6ce181366b881fc572da52de970b39b24",
+      "path": "hytale/pterodactyl-egg-hytale.json",
+      "patches": [
+        "hytale_keep_config",
+        "hytale_heap"
       ]
     }
   ]

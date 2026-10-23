@@ -6,7 +6,8 @@ Every change we make to upstream eggs lives in this file, so a resync is:
 
     git clone https://github.com/pelican-eggs/minecraft.git /tmp/minecraft
     git clone https://github.com/pelican-eggs/games-steamcmd.git /tmp/steamcmd
-    python3 tools/build.py --minecraft /tmp/minecraft --steamcmd /tmp/steamcmd
+    git clone https://github.com/pelican-eggs/games-standalone.git /tmp/standalone
+    python3 tools/build.py --minecraft /tmp/minecraft --steamcmd /tmp/steamcmd --standalone /tmp/standalone
     python3 tools/check_eggs.py
     git diff   # review, then commit
 """
@@ -23,6 +24,7 @@ import sys
 UPSTREAMS = {
     "minecraft": "https://github.com/pelican-eggs/minecraft",
     "steamcmd": "https://github.com/pelican-eggs/games-steamcmd",
+    "standalone": "https://github.com/pelican-eggs/games-standalone",
 }
 RAW_BASE = "https://raw.githubusercontent.com/TeamCryptid/eggs/main"
 JAVA25_IMAGE = "ghcr.io/pelican-eggs/yolks:java_25"
@@ -64,6 +66,9 @@ EGGS = [
     ("valheim-plus", "steamcmd", "valheim/valheim_plus/egg-pterodactyl-valheim-plus-mod.json",
      "valheim/plus/egg-pterodactyl-valheim-plus-mod.json",
      ["valheim_plus_doorstop", "valheim_startup", "valheim_password_text", "valheim_plus_install"]),
+    ("hytale", "standalone", "hytale/pterodactyl-egg-hytale.json",
+     "hytale/pterodactyl-egg-hytale.json",
+     ["hytale_keep_config", "hytale_heap"]),
 ]
 
 # Plain files the eggs download at install time, hosted here instead of upstream.
@@ -338,6 +343,45 @@ def patch_valheim_plus_install(egg, _upstream, egg_id):
     splice_valheim_install(egg, egg_id, VALHEIM_PLUS_SCRIPT)
 
 
+HYTALE_CONFIG_START = "echo '[2/2] Creating config.json...'\ncat > /mnt/server/Server/config.json << 'EOF'\n"
+HYTALE_CONFIG_END = "EOF\necho '  ✓ config.json created'\n"
+
+
+def patch_hytale_keep_config(egg, _upstream, egg_id):
+    """Upstream rewrote Server/config.json on every install, so a reinstall reset the
+    server name, password, player limit and view distance. Only create it when missing."""
+    inst = egg["scripts"]["installation"]
+    script = inst["script"].replace("\r\n", "\n")
+    a = script.find(HYTALE_CONFIG_START)
+    b = script.find(HYTALE_CONFIG_END, a)
+    if a < 0 or b < 0 or script.count(HYTALE_CONFIG_START) != 1:
+        sys.exit(f"{egg_id}: upstream config.json block changed; review the patch")
+    heredoc = script[a + len("echo '[2/2] Creating config.json...'\n"):b + len("EOF\n")]
+    new_block = ("if [ -f /mnt/server/Server/config.json ]; then\n"
+                 "  echo '[2/2] Keeping existing config.json'\n"
+                 "else\n"
+                 "  echo '[2/2] Creating config.json...'\n"
+                 + heredoc +
+                 "  echo '  ✓ config.json created'\n"
+                 "fi\n")
+    inst["script"] = script[:a] + new_block + script[b + len(HYTALE_CONFIG_END):]
+
+
+# Java heap = 92% of the panel memory. MaxRAMPercentage alone is measured against the
+# container limit, which Wings sets 5-15% above the plan depending on size; -XX:MaxRAM
+# makes the JVM size the heap from the plan itself, so 92% holds at every plan size.
+# Memory 0 (unlimited) would give MaxRAM=0 and a 128 MB heap: Hytale servers need a set limit.
+HYTALE_UPSTREAM_HEAP = "-XX:MaxRAMPercentage=95.0"
+HYTALE_HEAP = "-XX:MaxRAM={{SERVER_MEMORY}}M -XX:MaxRAMPercentage=92.0"
+
+
+def patch_hytale_heap(egg, _upstream, egg_id):
+    """Heap = 92% of the plan, independent of Wings' container overhead."""
+    if egg["startup"].count(HYTALE_UPSTREAM_HEAP) != 1 or "-jar HytaleServer.jar" not in egg["startup"]:
+        sys.exit(f"{egg_id}: upstream startup memory flags changed; review the patch")
+    egg["startup"] = egg["startup"].replace(HYTALE_UPSTREAM_HEAP, HYTALE_HEAP)
+
+
 PATCHES = {
     "java25": patch_java25,
     "modrinth_script": patch_modrinth_script,
@@ -353,6 +397,8 @@ PATCHES = {
     "valheim_modpack_text": patch_valheim_modpack_text,
     "valheim_plus_doorstop": patch_valheim_plus_doorstop,
     "valheim_plus_install": patch_valheim_plus_install,
+    "hytale_keep_config": patch_hytale_keep_config,
+    "hytale_heap": patch_hytale_heap,
 }
 
 
