@@ -162,6 +162,19 @@
         "hytale_keep_config",
         "hytale_heap"
       ]
+    },
+    {
+      "id": "rust",
+      "upstream": "steamcmd",
+      "upstream_path": "rust/vanilla/egg-pterodactyl-rust.json",
+      "upstream_sha256": "a1c40da88e2e2275808fbfc4e83d61654231354245c4ab284e8a762034380457",
+      "path": "rust/egg-pterodactyl-rust.json",
+      "patches": [
+        "rust_ports",
+        "rust_rcon_password",
+        "rust_max_players",
+        "rust_startup_checks"
+      ]
     }
   ]
 }

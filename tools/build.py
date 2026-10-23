@@ -69,6 +69,9 @@ EGGS = [
     ("hytale", "standalone", "hytale/pterodactyl-egg-hytale.json",
      "hytale/pterodactyl-egg-hytale.json",
      ["hytale_keep_config", "hytale_heap"]),
+    ("rust", "steamcmd", "rust/vanilla/egg-pterodactyl-rust.json",
+     "rust/egg-pterodactyl-rust.json",
+     ["rust_ports", "rust_rcon_password", "rust_max_players", "rust_startup_checks"]),
 ]
 
 # Plain files the eggs download at install time, hosted here instead of upstream.
@@ -382,6 +385,82 @@ def patch_hytale_heap(egg, _upstream, egg_id):
     egg["startup"] = egg["startup"].replace(HYTALE_UPSTREAM_HEAP, HYTALE_HEAP)
 
 
+# Rust uses four ports: game (primary allocation), query (server browser), RCON and Rust+.
+# Wings passes only the primary allocation into the container, so the other three are
+# variables the customer fills in from allocations they add in the Network tab.
+RUST_PORT_VARS = {
+    "QUERY_PORT": ("Query Port", 1024,
+                   "Allocation for the server browser query (UDP). Add an allocation in the Network tab and enter its port here. Required."),
+    "RCON_PORT": ("RCON Port", 1024,
+                  "Allocation for RCON (TCP), used by the panel console and remote admin tools. Add an allocation in the Network tab and enter its port here. Required."),
+    "APP_PORT": ("Rust+ App Port", 10000,
+                 "Allocation for the Rust+ companion app (TCP, 10000 or higher). Add an allocation in the Network tab and enter its port here. Required."),
+}
+
+
+def patch_rust_ports(egg, _upstream, egg_id):
+    """Query, RCON and Rust+ ports become customer-entered; the startup check requires them.
+    Rules are nullable so panel/store server creation works before the customer adds allocations."""
+    for env, (name, low, desc) in RUST_PORT_VARS.items():
+        v = find_var(egg, env, egg_id)
+        v.update({"name": name, "description": desc, "default_value": "",
+                  "user_viewable": True, "user_editable": True,
+                  "rules": f"nullable|integer|between:{low},65535"})
+        if "{{" + env + "}}" not in egg["startup"]:
+            sys.exit(f"{egg_id}: upstream startup no longer uses {{{{{env}}}}}; review the patch")
+
+
+def patch_rust_rcon_password(egg, _upstream, egg_id):
+    """RCON is now always on an allocation, so it is reachable from the internet."""
+    v = find_var(egg, "RCON_PASS", egg_id)
+    if not v["rules"].startswith("required|regex:"):
+        sys.exit(f"{egg_id}: upstream RCON_PASS rules changed; review the patch")
+    v["rules"] = "required|regex:/^[\\w.-]*$/|min:8|max:64|not_in:CHANGEME,changeme"
+    v["description"] = ("RCON password, 8 to 64 characters (letters, numbers, . _ -). RCON is reachable "
+                        "from the internet on the RCON Port, so use a strong password. The server will "
+                        "not start with an empty, short or CHANGEME password.")
+
+
+def patch_rust_max_players(egg, _upstream, egg_id):
+    """Plans are priced on CPU, memory and disk, not players."""
+    find_var(egg, "MAX_PLAYERS", egg_id)["user_editable"] = True
+
+
+# Runs first on every boot. The image's entrypoint runs `eval echo -e ${STARTUP}`, then its Node
+# wrapper runs the result with /bin/sh (dash). So the added commands are one single-quoted block
+# (eval passes it through untouched), use only shell builtins, and avoid glob characters (* ? [ ]),
+# backslashes and apostrophes. It starts with `export LD_PRELOAD` because the entrypoint puts
+# `LD_PRELOAD=...libdoorstop.so ` in front of the startup for Carbon; an assignment before the
+# `export` builtin stays set and is exported, so it still reaches RustDedicated.
+# On failure it stops the wrapper (kill $PPID): the wrapper otherwise waits for RCON forever and
+# the panel would show the server as starting. The 1-second sleep lets the wrapper print the
+# message first; LD_PRELOAD is cleared for it so Carbon's doorstop isn't injected into sleep.
+RUST_CHECK = (
+    "'export LD_PRELOAD ; "
+    "rustfail() { echo \"ERROR: $1\" ; LD_PRELOAD= sleep 1 ; kill ${PPID} ; exit 1 ; } ; "
+    "test -n \"${QUERY_PORT}\" && test -n \"${RCON_PORT}\" && test -n \"${APP_PORT}\" || "
+    "rustfail \"Rust needs 4 ports. Open the Network tab, click Create Allocation until the server has 4, "
+    "then enter the 3 new ports in Startup as Query Port, RCON Port and Rust+ App Port, and restart.\" ; "
+    "test \"${QUERY_PORT}\" != \"${SERVER_PORT}\" && test \"${RCON_PORT}\" != \"${SERVER_PORT}\" && "
+    "test \"${APP_PORT}\" != \"${SERVER_PORT}\" && test \"${QUERY_PORT}\" != \"${RCON_PORT}\" && "
+    "test \"${QUERY_PORT}\" != \"${APP_PORT}\" && test \"${RCON_PORT}\" != \"${APP_PORT}\" || "
+    "rustfail \"The game port, Query Port, RCON Port and Rust+ App Port must all be different allocations.\" ; "
+    "test \"${#RCON_PASS}\" -ge 8 && test \"${RCON_PASS}\" != CHANGEME && test \"${RCON_PASS}\" != changeme || "
+    "rustfail \"RCON Password must be at least 8 characters and not CHANGEME. Set it in Startup, then restart.\" ; "
+    "echo \"Ports: game ${SERVER_PORT} UDP, query ${QUERY_PORT} UDP, RCON ${RCON_PORT} TCP, Rust+ ${APP_PORT} TCP\" ; ' "
+)
+
+
+def patch_rust_startup_checks(egg, _upstream, egg_id):
+    if not egg["startup"].startswith("./RustDedicated "):
+        sys.exit(f"{egg_id}: upstream startup no longer starts with ./RustDedicated; review the patch")
+    inner = RUST_CHECK.strip()[1:-1]
+    bad = set(inner) & set("*?[]\\'")
+    if bad:
+        sys.exit(f"{egg_id}: startup check contains unsafe characters {sorted(bad)}")
+    egg["startup"] = RUST_CHECK + egg["startup"]
+
+
 PATCHES = {
     "java25": patch_java25,
     "modrinth_script": patch_modrinth_script,
@@ -399,6 +478,10 @@ PATCHES = {
     "valheim_plus_install": patch_valheim_plus_install,
     "hytale_keep_config": patch_hytale_keep_config,
     "hytale_heap": patch_hytale_heap,
+    "rust_ports": patch_rust_ports,
+    "rust_rcon_password": patch_rust_rcon_password,
+    "rust_max_players": patch_rust_max_players,
+    "rust_startup_checks": patch_rust_startup_checks,
 }
 
 
