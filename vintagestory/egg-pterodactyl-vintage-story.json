@@ -1,0 +1,94 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": "https://raw.githubusercontent.com/TeamCryptid/eggs/main/vintagestory/egg-pterodactyl-vintage-story.json"
+    },
+    "exported_at": "2026-02-10T14:32:54+00:00",
+    "name": "Vintage Story",
+    "author": "mail@wuffy.eu",
+    "description": "Vintage Story is an uncompromising wilderness survival sandbox game inspired by lovecraftian horror themes. Find yourself in a ruined world reclaimed by nature and permeated by unnerving temporal disturbances. Relive the advent of human civilization, or take your own path.",
+    "features": null,
+    "docker_images": {
+        "Dotnet 10": "ghcr.io/pelican-eggs/yolks:dotnet_10",
+        "Dotnet 8": "ghcr.io/pelican-eggs/yolks:dotnet_8",
+        "Dotnet 7": "ghcr.io/pelican-eggs/yolks:dotnet_7"
+    },
+    "file_denylist": [],
+    "startup": "test \"${SERVER_MEMORY:-0}\" -gt 0 && export DOTNET_GCHeapHardLimit=$(printf %x $(( (SERVER_MEMORY - (SERVER_MEMORY + SERVER_MEMORY) / 25) << 20 ))) && echo \"Memory: .NET heap limit $(( SERVER_MEMORY - (SERVER_MEMORY + SERVER_MEMORY) / 25 )) MB, 92 percent of ${SERVER_MEMORY} MB\" ; if test -f .vs-dotnet && ! dotnet --list-runtimes 2>/dev/null | grep -q \"Microsoft.NETCore.App $(cat .vs-dotnet).\" ; then echo \"ERROR: Vintage Story $(cat .vs-version 2>/dev/null) needs .NET $(cat .vs-dotnet), which this Docker image does not have. Choose the Dotnet $(cat .vs-dotnet) image under Startup, Docker Image, then restart.\" ; exit 1 ; fi ; ./VintagestoryServer --dataPath ./data --port={{SERVER_PORT}} --maxclients={{MAX_CLIENTS}} {{OPTIONS}}",
+    "config": {
+        "files": "{}",
+        "startup": "{\n    \"done\": \"Dedicated Server now running on Port \"\n}",
+        "logs": "{}",
+        "stop": "/stop"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/bash\n## ---------------------------------------------------------------------------\n## TeamCryptid eggs: Vintage Story server install.\n## Replaces the upstream install script (pelican-eggs/games-standalone, MIT).\n##\n## Changes from upstream:\n##   - any failure exits 1 (upstream used a bare `exit`, so the panel showed success)\n##   - downloads and verifies (MD5 from the release API) BEFORE touching the\n##     installed files; a failed download leaves the server as it was\n##   - release API over https\n##   - refuses to install an older version than the one installed (worlds can\n##     break on downgrade) unless ALLOW_DOWNGRADE=1, which only staff can set\n##   - records the installed version in .vs-version and the .NET major version it\n##     needs in .vs-dotnet; the startup command uses .vs-dotnet to say which\n##     Docker image to pick when it doesn't match\n## Server Files: /mnt/server\n## ---------------------------------------------------------------------------\n\nfatal() {\n    echo \"-----------------------------------------\"\n    echo \"Installation failed: $*\"\n    echo \"-----------------------------------------\"\n    exit 1\n}\n\nAPI=\"https://api.vintagestory.at\"\nCDN=\"https://cdn.vintagestory.at/gamefiles\"\nBRANCH=\"${FILES_BRANCH:-stable}\"\nVERSION=\"${RELEASE_VERSION:-latest}\"\nWORK=$(mktemp -d)\ntrap 'rm -rf \"${WORK}\"' EXIT\n\ncase \"${BRANCH}\" in\n    stable|unstable|pre) ;;\n    *) fatal \"unknown release branch '${BRANCH}' (use stable, unstable or pre)\" ;;\nesac\n\n# Debian version order, with -rc / -pre treated as pre-releases (1.22.0-rc.10 < 1.22.0).\nvs_ver() { echo \"$1\" | sed -E 's/-(rc|pre)/~\\1/'; }\n\nEXPECTED_MD5=\"\"\nif [ \"${BRANCH}\" = \"pre\" ]; then\n    [ \"${VERSION}\" != \"latest\" ] || fatal \"the pre branch has no release list; set Release version to an exact version\"\n    DOWNLOAD_URL=\"${CDN}/pre/vs_server_linux-x64_${VERSION}.tar.gz\"\nelse\n    LIST=$(curl -sfSL \"${API}/${BRANCH}.json\") || fatal \"could not reach ${API}/${BRANCH}.json\"\n    if [ \"${VERSION}\" = \"latest\" ]; then\n        VERSION=$(jq -r 'keys_unsorted[0] // empty' <<< \"${LIST}\")\n        [ -n \"${VERSION}\" ] || fatal \"no versions listed on the ${BRANCH} branch\"\n    fi\n    ENTRY=$(jq -c --arg v \"${VERSION}\" '.[$v].linuxserver // empty' <<< \"${LIST}\")\n    if [ -n \"${ENTRY}\" ]; then\n        DOWNLOAD_URL=$(jq -r '.urls.cdn // .urls.local // empty' <<< \"${ENTRY}\")\n        EXPECTED_MD5=$(jq -r '.md5 // empty' <<< \"${ENTRY}\")\n    else\n        echo \"Version ${VERSION} is not listed on the ${BRANCH} branch; trying the CDN directly (no checksum)\"\n        DOWNLOAD_URL=\"${CDN}/${BRANCH}/vs_server_linux-x64_${VERSION}.tar.gz\"\n    fi\nfi\n\necho \"Branch:   ${BRANCH}\"\necho \"Version:  ${VERSION}\"\necho \"Download: ${DOWNLOAD_URL}\"\n\ncd /mnt/server || fatal \"cannot enter /mnt/server\"\n\n# Downgrade guard.\nif [ -f .vs-version ]; then\n    INSTALLED=$(cat .vs-version)\n    if dpkg --compare-versions \"$(vs_ver \"${VERSION}\")\" lt \"$(vs_ver \"${INSTALLED}\")\"; then\n        if [ \"${ALLOW_DOWNGRADE}\" = \"1\" ]; then\n            echo \"WARNING: downgrading ${INSTALLED} -> ${VERSION} because Allow Downgrade is on\"\n        else\n            fatal \"${VERSION} is older than the installed ${INSTALLED}. Downgrading can damage worlds. Back up the server, then ask staff to turn on Allow Downgrade.\"\n        fi\n    fi\nfi\n\ncurl -sfSL -o \"${WORK}/vs_server.tar.gz\" \"${DOWNLOAD_URL}\" || fatal \"download failed. Check that version ${VERSION} exists on the ${BRANCH} branch.\"\nif [ -n \"${EXPECTED_MD5}\" ]; then\n    ACTUAL_MD5=$(md5sum \"${WORK}/vs_server.tar.gz\" | cut -d' ' -f1)\n    [ \"${ACTUAL_MD5}\" = \"${EXPECTED_MD5}\" ] || fatal \"checksum mismatch (expected ${EXPECTED_MD5}, got ${ACTUAL_MD5})\"\n    echo \"MD5 verified: ${ACTUAL_MD5}\"\nfi\n\nmkdir -p \"${WORK}/new\"\ntar -xzf \"${WORK}/vs_server.tar.gz\" -C \"${WORK}/new\" || fatal \"the download is not a valid server archive\"\n[ -f \"${WORK}/new/VintagestoryServer.dll\" ] || fatal \"the archive does not contain VintagestoryServer.dll\"\nDOTNET_MAJOR=$(jq -r '.runtimeOptions.tfm // empty' \"${WORK}/new/VintagestoryServer.runtimeconfig.json\" 2>/dev/null | sed -E 's/^net([0-9]+).*/\\1/')\n\n# Only now replace the installed game files. Old assets/ and Lib/ go first so files\n# removed in the new version don't linger (as upstream did). data/ (worlds, config, mods) is never touched.\nif [ -d assets ]; then\n    echo \"Removing old installation files\"\n    rm -rf assets/ Lib/\nfi\ncp -a \"${WORK}/new/.\" /mnt/server/ || fatal \"could not copy the new server files into place\"\nrm -f server.sh\n\necho \"${VERSION}\" > .vs-version\nif [ -n \"${DOTNET_MAJOR}\" ]; then\n    echo \"${DOTNET_MAJOR}\" > .vs-dotnet\n    echo \"This version needs .NET ${DOTNET_MAJOR}: pick the 'Dotnet ${DOTNET_MAJOR}' Docker image in Startup.\"\nelse\n    rm -f .vs-dotnet\nfi\n\necho \"-----------------------------------------\"\necho \"Installation completed: Vintage Story ${VERSION} (${BRANCH})\"\necho \"-----------------------------------------\"\n",
+            "container": "ghcr.io/pelican-eggs/installers:debian",
+            "entrypoint": "bash"
+        }
+    },
+    "variables": [
+        {
+            "name": "Start options",
+            "description": "",
+            "env_variable": "OPTIONS",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:200",
+            "field_type": "text"
+        },
+        {
+            "name": "Release branch",
+            "description": "stable, unstable or pre. Note: unstable can be older than stable (between release cycles), and the install refuses to downgrade. Changing this needs a reinstall.",
+            "env_variable": "FILES_BRANCH",
+            "default_value": "stable",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|in:stable,unstable,pre",
+            "field_type": "text"
+        },
+        {
+            "name": "Release version",
+            "description": "latest, or an exact version such as 1.22.7 (required for the pre branch). Changing this needs a reinstall. Versions older than the installed one are refused unless staff turn on Allow Downgrade.",
+            "env_variable": "RELEASE_VERSION",
+            "default_value": "latest",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:20",
+            "field_type": "text"
+        },
+        {
+            "name": "Max Clients",
+            "description": "",
+            "env_variable": "MAX_CLIENTS",
+            "default_value": "16",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|integer|max:256",
+            "field_type": "text"
+        },
+        {
+            "name": "Sqlite temporary files directory",
+            "description": "Defines the location for the temporary files in sqlite. This is needed for the \"/db vacuum\" command (added in 1.19) since else it will use the /tmp folder which by default only has 100MB and is in memory.",
+            "env_variable": "SQLITE_TMPDIR",
+            "default_value": "/home/container/data/Backups",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string|max:40",
+            "field_type": "text"
+        },
+        {
+            "name": "Allow Downgrade",
+            "description": "Staff only. 1 lets the next reinstall install an older version than the installed one. Downgrading can damage worlds: take a backup first, and set this back to 0 afterwards.",
+            "env_variable": "ALLOW_DOWNGRADE",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|boolean",
+            "field_type": "text"
+        }
+    ]
+}

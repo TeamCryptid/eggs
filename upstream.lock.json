@@ -16,7 +16,7 @@
       "commit_date": "2026-10-13T14:28:55-07:00"
     }
   },
-  "built": "2026-10-23",
+  "built": "2026-10-24",
   "eggs": [
     {
       "id": "neoforge",
@@ -186,6 +186,18 @@
         "unturned_install",
         "unturned_variables",
         "unturned_startup"
+      ]
+    },
+    {
+      "id": "vintagestory",
+      "upstream": "standalone",
+      "upstream_path": "vintage_story/egg-pterodactyl-vintage-story.json",
+      "upstream_sha256": "2c45f70ff747110366a698eee461220987ed520d23567bd420eb84c4f07bb4e1",
+      "path": "vintagestory/egg-pterodactyl-vintage-story.json",
+      "patches": [
+        "vintagestory_install",
+        "vintagestory_variables",
+        "vintagestory_startup"
       ]
     }
   ]

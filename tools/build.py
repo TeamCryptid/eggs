@@ -33,6 +33,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 FILL_SCRIPT = ROOT / "tools" / "scripts" / "fill-install.sh"
 VALHEIM_BEPINEX_SCRIPT = ROOT / "tools" / "scripts" / "valheim-bepinex.sh"
 VALHEIM_PLUS_SCRIPT = ROOT / "tools" / "scripts" / "valheim-plus.sh"
+VINTAGESTORY_SCRIPT = ROOT / "tools" / "scripts" / "vintagestory-install.sh"
 
 # id, upstream, upstream source path, destination path in this repo, patches applied
 EGGS = [
@@ -75,6 +76,9 @@ EGGS = [
     ("unturned", "steamcmd", "unturned/egg-pterodactyl-unturned.json",
      "unturned/egg-pterodactyl-unturned.json",
      ["unturned_install", "unturned_variables", "unturned_startup"]),
+    ("vintagestory", "standalone", "vintage_story/egg-pterodactyl-vintage-story.json",
+     "vintagestory/egg-pterodactyl-vintage-story.json",
+     ["vintagestory_install", "vintagestory_variables", "vintagestory_startup"]),
 ]
 
 # Plain files the eggs download at install time, hosted here instead of upstream.
@@ -560,6 +564,65 @@ def patch_unturned_startup(egg, _upstream, egg_id):
     egg["startup"] = UNTURNED_PREFIX + st
 
 
+def patch_vintagestory_install(egg, _upstream, egg_id):
+    """Replace the install script: fail loudly, verify before replacing, block downgrades,
+    record version and .NET major for the startup check."""
+    inst = egg["scripts"]["installation"]
+    old = inst["script"].replace("\r\n", "\n")
+    for marker in ("api.vintagestory.at", "vs_server_linux-x64_", "rm -rf assets/"):
+        if marker not in old:
+            sys.exit(f"{egg_id}: upstream install script changed ({marker!r} missing); review the patch")
+    if inst.get("entrypoint") != "bash" or "debian" not in inst.get("container", ""):
+        sys.exit(f"{egg_id}: expected a debian/bash installer, got {inst.get('container')} / {inst.get('entrypoint')}")
+    inst["script"] = VINTAGESTORY_SCRIPT.read_text()
+
+
+def patch_vintagestory_variables(egg, _upstream, egg_id):
+    for env in ("FILES_BRANCH", "RELEASE_VERSION", "MAX_CLIENTS"):
+        find_var(egg, env, egg_id)
+    find_var(egg, "FILES_BRANCH", egg_id)["description"] = (
+        "stable, unstable or pre. Note: unstable can be older than stable (between release cycles), "
+        "and the install refuses to downgrade. Changing this needs a reinstall.")
+    find_var(egg, "RELEASE_VERSION", egg_id)["description"] = (
+        "latest, or an exact version such as 1.22.7 (required for the pre branch). Changing this needs a "
+        "reinstall. Versions older than the installed one are refused unless staff turn on Allow Downgrade.")
+    if any(v["env_variable"] == "ALLOW_DOWNGRADE" for v in egg["variables"]):
+        sys.exit(f"{egg_id}: upstream now has ALLOW_DOWNGRADE; review the patch")
+    egg["variables"].append({
+        "name": "Allow Downgrade",
+        "description": "Staff only. 1 lets the next reinstall install an older version than the installed one. "
+                       "Downgrading can damage worlds: take a backup first, and set this back to 0 afterwards.",
+        "env_variable": "ALLOW_DOWNGRADE", "default_value": "0",
+        "user_viewable": True, "user_editable": False,
+        "rules": "required|boolean", "field_type": "text"})
+
+
+# Runs first on every boot. The .NET image runs `echo -e ${STARTUP}` then `eval` unquoted, so
+# this text avoids glob characters (* ? [ ]) and backslashes; 92% is m - 2m/25 and MB to bytes
+# is << 20, so no `*` is needed.
+# 1. .NET GC heap limit = 92% of the panel memory (DOTNET_GCHeapHardLimit, hex bytes). Without
+#    it .NET uses 75% of the container limit. Memory 0 (unlimited) leaves .NET's default.
+# 2. If the installed version needs a different .NET than this image has, stop with a message
+#    naming the image to pick (the install writes the needed major version to .vs-dotnet).
+VINTAGESTORY_PREFIX = (
+    'test "${SERVER_MEMORY:-0}" -gt 0 && '
+    'export DOTNET_GCHeapHardLimit=$(printf %x $(( (SERVER_MEMORY - (SERVER_MEMORY + SERVER_MEMORY) / 25) << 20 ))) && '
+    'echo "Memory: .NET heap limit $(( SERVER_MEMORY - (SERVER_MEMORY + SERVER_MEMORY) / 25 )) MB, 92 percent of ${SERVER_MEMORY} MB" ; '
+    'if test -f .vs-dotnet && ! dotnet --list-runtimes 2>/dev/null | grep -q "Microsoft.NETCore.App $(cat .vs-dotnet)." ; then '
+    'echo "ERROR: Vintage Story $(cat .vs-version 2>/dev/null) needs .NET $(cat .vs-dotnet), which this Docker image does not have. '
+    'Choose the Dotnet $(cat .vs-dotnet) image under Startup, Docker Image, then restart." ; exit 1 ; fi ; '
+)
+
+
+def patch_vintagestory_startup(egg, _upstream, egg_id):
+    if not egg["startup"].startswith("./VintagestoryServer "):
+        sys.exit(f"{egg_id}: upstream startup changed; review the patch")
+    bad = set(VINTAGESTORY_PREFIX) & set("*?[]\\")
+    if bad:
+        sys.exit(f"{egg_id}: startup prefix contains unsafe characters {sorted(bad)}")
+    egg["startup"] = VINTAGESTORY_PREFIX + egg["startup"]
+
+
 PATCHES = {
     "java25": patch_java25,
     "modrinth_script": patch_modrinth_script,
@@ -584,6 +647,9 @@ PATCHES = {
     "unturned_install": patch_unturned_install,
     "unturned_variables": patch_unturned_variables,
     "unturned_startup": patch_unturned_startup,
+    "vintagestory_install": patch_vintagestory_install,
+    "vintagestory_variables": patch_vintagestory_variables,
+    "vintagestory_startup": patch_vintagestory_startup,
 }
 
 
