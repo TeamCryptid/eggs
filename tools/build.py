@@ -34,6 +34,10 @@ FILL_SCRIPT = ROOT / "tools" / "scripts" / "fill-install.sh"
 VALHEIM_BEPINEX_SCRIPT = ROOT / "tools" / "scripts" / "valheim-bepinex.sh"
 VALHEIM_PLUS_SCRIPT = ROOT / "tools" / "scripts" / "valheim-plus.sh"
 VINTAGESTORY_SCRIPT = ROOT / "tools" / "scripts" / "vintagestory-install.sh"
+TERRARIA_SCRIPT = ROOT / "tools" / "scripts" / "terraria-install.sh"
+TSHOCK_SCRIPT = ROOT / "tools" / "scripts" / "tshock-install.sh"
+TMODLOADER_SCRIPT = ROOT / "tools" / "scripts" / "tmodloader-install.sh"
+FACTORIO_SCRIPT = ROOT / "tools" / "scripts" / "factorio-install.sh"
 
 # id, upstream, upstream source path, destination path in this repo, patches applied
 EGGS = [
@@ -79,6 +83,18 @@ EGGS = [
     ("vintagestory", "standalone", "vintage_story/egg-pterodactyl-vintage-story.json",
      "vintagestory/egg-pterodactyl-vintage-story.json",
      ["vintagestory_install", "vintagestory_variables", "vintagestory_startup"]),
+    ("terraria", "standalone", "terraria/vanilla/egg-pterodactyl-terraria-vanilla.json",
+     "terraria/vanilla/egg-pterodactyl-terraria-vanilla.json",
+     ["terraria_install", "terraria_variables"]),
+    ("tshock", "standalone", "terraria/tshock/egg-pterodactyl-tshock.json",
+     "terraria/tshock/egg-pterodactyl-tshock.json",
+     ["tshock_install", "tshock_images", "tshock_variables", "tshock_startup"]),
+    ("tmodloader", "standalone", "terraria/tmodloader/egg-pterodactyl-t-modloader.json",
+     "terraria/tmodloader/egg-pterodactyl-t-modloader.json",
+     ["tmodloader_install", "tmodloader_images", "tmodloader_variables", "tmodloader_startup"]),
+    ("factorio", "standalone", "factorio/factorio/egg-pterodactyl-factorio.json",
+     "factorio/egg-pterodactyl-factorio.json",
+     ["factorio_install", "factorio_variables", "factorio_startup"]),
 ]
 
 # Plain files the eggs download at install time, hosted here instead of upstream.
@@ -597,30 +613,253 @@ def patch_vintagestory_variables(egg, _upstream, egg_id):
         "rules": "required|boolean", "field_type": "text"})
 
 
-# Runs first on every boot. The .NET image runs `echo -e ${STARTUP}` then `eval` unquoted, so
-# this text avoids glob characters (* ? [ ]) and backslashes; 92% is m - 2m/25 and MB to bytes
-# is << 20, so no `*` is needed.
-# 1. .NET GC heap limit = 92% of the panel memory (DOTNET_GCHeapHardLimit, hex bytes). Without
-#    it .NET uses 75% of the container limit. Memory 0 (unlimited) leaves .NET's default.
-# 2. If the installed version needs a different .NET than this image has, stop with a message
-#    naming the image to pick (the install writes the needed major version to .vs-dotnet).
-VINTAGESTORY_PREFIX = (
-    'test "${SERVER_MEMORY:-0}" -gt 0 && '
-    'export DOTNET_GCHeapHardLimit=$(printf %x $(( (SERVER_MEMORY - (SERVER_MEMORY + SERVER_MEMORY) / 25) << 20 ))) && '
-    'echo "Memory: .NET heap limit $(( SERVER_MEMORY - (SERVER_MEMORY + SERVER_MEMORY) / 25 )) MB, 92 percent of ${SERVER_MEMORY} MB" ; '
-    'if test -f .vs-dotnet && ! dotnet --list-runtimes 2>/dev/null | grep -q "Microsoft.NETCore.App $(cat .vs-dotnet)." ; then '
-    'echo "ERROR: Vintage Story $(cat .vs-version 2>/dev/null) needs .NET $(cat .vs-dotnet), which this Docker image does not have. '
-    'Choose the Dotnet $(cat .vs-dotnet) image under Startup, Docker Image, then restart." ; exit 1 ; fi ; '
-)
+def dotnet_prefix(game, marker):
+    """Startup prefix for .NET game servers (Vintage Story, TShock, tModLoader). Runs first on
+    every boot. The .NET images run `echo -e ${STARTUP}` then `eval` unquoted, so this text
+    avoids glob characters (* ? [ ]) and backslashes; 92% is m - 2m/25 and MB to bytes is << 20,
+    so no `*` is needed.
+    1. .NET GC heap limit = 92% of the panel memory (DOTNET_GCHeapHardLimit, hex bytes). Without
+       it .NET uses 75% of the container limit. Memory 0 (unlimited) leaves .NET's default.
+    2. If the installed version needs a different .NET than this image has, stop with a message
+       naming the image to pick (the install writes the needed major version to <marker>-dotnet
+       and the installed version to <marker>-version)."""
+    return (
+        'test "${SERVER_MEMORY:-0}" -gt 0 && '
+        'export DOTNET_GCHeapHardLimit=$(printf %x $(( (SERVER_MEMORY - (SERVER_MEMORY + SERVER_MEMORY) / 25) << 20 ))) && '
+        'echo "Memory: .NET heap limit $(( SERVER_MEMORY - (SERVER_MEMORY + SERVER_MEMORY) / 25 )) MB, 92 percent of ${SERVER_MEMORY} MB" ; '
+        f'if test -f {marker}-dotnet && ! dotnet --list-runtimes 2>/dev/null | grep -q "Microsoft.NETCore.App $(cat {marker}-dotnet)." ; then '
+        f'echo "ERROR: {game} $(cat {marker}-version 2>/dev/null) needs .NET $(cat {marker}-dotnet), which this Docker image does not have. '
+        f'Choose the Dotnet $(cat {marker}-dotnet) image under Startup, Docker Image, then restart." ; exit 1 ; fi ; '
+    )
+
+
+def add_prefix(egg, egg_id, prefix, starts_with):
+    """Put a startup prefix in front of upstream's command, after checking both."""
+    if not egg["startup"].startswith(starts_with):
+        sys.exit(f"{egg_id}: upstream startup no longer starts with {starts_with!r}; review the patch")
+    bad = set(prefix) & set("*?[]\\")
+    if bad:
+        sys.exit(f"{egg_id}: startup prefix contains unsafe characters {sorted(bad)}")
+    egg["startup"] = prefix + egg["startup"]
 
 
 def patch_vintagestory_startup(egg, _upstream, egg_id):
-    if not egg["startup"].startswith("./VintagestoryServer "):
+    add_prefix(egg, egg_id, dotnet_prefix("Vintage Story", ".vs"), "./VintagestoryServer ")
+
+
+def replace_install(egg, egg_id, script_path, markers):
+    """Replace upstream's whole install script with ours, after checking upstream still
+    looks like the script we reviewed and still runs on a debian/bash installer."""
+    inst = egg["scripts"]["installation"]
+    old = inst["script"].replace("\r\n", "\n")
+    for marker in markers:
+        if marker not in old:
+            sys.exit(f"{egg_id}: upstream install script changed ({marker!r} missing); review the patch")
+    if inst.get("entrypoint") not in ("bash", "/bin/bash") or "debian" not in inst.get("container", ""):
+        sys.exit(f"{egg_id}: expected a debian/bash installer, got {inst.get('container')} / {inst.get('entrypoint')}")
+    inst["entrypoint"] = "bash"
+    inst["script"] = script_path.read_text()
+
+
+def set_dotnet_images(egg, egg_id, expected, majors):
+    """Image list for a .NET egg: majors[0] is the default. `expected` is upstream's list,
+    so the build stops if upstream changes its images."""
+    if egg["docker_images"] != expected:
+        sys.exit(f"{egg_id}: upstream docker images changed to {egg['docker_images']}; review the patch")
+    egg["docker_images"] = {f"Dotnet {m}": f"ghcr.io/parkervcp/yolks:dotnet_{m}" for m in majors}
+
+
+def update_var(egg, egg_id, env, **fields):
+    find_var(egg, env, egg_id).update(fields)
+
+
+def add_var(egg, egg_id, env, name, description, default, rules, editable=True):
+    if any(v["env_variable"] == env for v in egg["variables"]):
+        sys.exit(f"{egg_id}: upstream now has {env}; review the patch")
+    egg["variables"].append({
+        "name": name, "description": description, "env_variable": env, "default_value": default,
+        "user_viewable": True, "user_editable": editable, "rules": rules, "field_type": "text"})
+
+
+def remove_var(egg, egg_id, env):
+    find_var(egg, env, egg_id)
+    egg["variables"] = [v for v in egg["variables"] if v["env_variable"] != env]
+
+
+# --- Terraria (vanilla) ---------------------------------------------------------
+
+def patch_terraria_install(egg, _upstream, egg_id):
+    replace_install(egg, egg_id, TERRARIA_SCRIPT,
+                    ("terraria.org/api/get/dedicated-servers-names", "TerrariaServer.bin.x86_64", "serverconfig.txt"))
+
+
+def patch_terraria_variables(egg, _upstream, egg_id):
+    update_var(egg, egg_id, "TERRARIA_VERSION", description=(
+        "latest, or an exact version such as 1.4.4.9 (or 1449). Changing this needs a reinstall."))
+    v = find_var(egg, egg_id=egg_id, env="WORLD_DIFFICULTY")
+    if v["default_value"] != "3":
+        sys.exit(f"{egg_id}: upstream WORLD_DIFFICULTY default changed; review the patch")
+    v["default_value"] = "0"
+    v["description"] = ("Difficulty of a newly created world: 0 normal, 1 expert, 2 master, 3 journey. "
+                        "An existing world keeps its difficulty.")
+
+
+# --- TShock ----------------------------------------------------------------------
+
+def patch_tshock_install(egg, _upstream, egg_id):
+    replace_install(egg, egg_id, TSHOCK_SCRIPT, ("Pryaxis/TShock", "TShock.Server"))
+
+
+def patch_tshock_images(egg, _upstream, egg_id):
+    """TShock 6 needs .NET 9 (upstream's default image was .NET 6, which can't run it);
+    TShock 5 needs .NET 6; TShock has announced .NET 10 next."""
+    set_dotnet_images(egg, egg_id, {"Dotnet 6": "ghcr.io/parkervcp/yolks:dotnet_6",
+                                    "Dotnet 9": "ghcr.io/parkervcp/yolks:dotnet_9"}, [9, 10, 6])
+
+
+def patch_tshock_variables(egg, _upstream, egg_id):
+    update_var(egg, egg_id, "MAX_PLAYERS", user_editable=True)
+    update_var(egg, egg_id, "WORLD_SIZE", user_editable=True, rules="required|integer|in:1,2,3",
+               description="Size of a newly created world: 1 small, 2 medium, 3 large. An existing world keeps its size.")
+    update_var(egg, egg_id, "TSHOCK_VERSION", description=(
+        "latest (newest non-pre-release), or a release tag such as v6.2.1. Changing this needs a reinstall. "
+        "TShock 6 needs the Dotnet 9 image, TShock 5 the Dotnet 6 image."))
+
+
+def patch_tshock_startup(egg, _upstream, egg_id):
+    add_prefix(egg, egg_id, dotnet_prefix("TShock", ".tshock"), "./TShock.Server ")
+
+
+# --- tModLoader --------------------------------------------------------------------
+
+TML_WORKSHOP_ARG = " -steamworkshopfolder ~/steamapps/workshop"
+
+
+def patch_tmodloader_install(egg, _upstream, egg_id):
+    replace_install(egg, egg_id, TMODLOADER_SCRIPT, ("tmodloader/tmodloader/releases", "tModLoader.dll"))
+
+
+def patch_tmodloader_images(egg, _upstream, egg_id):
+    """tModLoader for Terraria 1.4.4 needs .NET 8; 2022-era builds .NET 6."""
+    set_dotnet_images(egg, egg_id, {"Dotnet 8": "ghcr.io/parkervcp/yolks:dotnet_8",
+                                    "Dotnet 6": "ghcr.io/parkervcp/yolks:dotnet_6"}, [8, 10, 6])
+
+
+def patch_tmodloader_variables(egg, _upstream, egg_id):
+    update_var(egg, egg_id, "MAX_PLAYERS", user_editable=True)
+    update_var(egg, egg_id, "VERSION", description=(
+        "latest, or a release tag such as v2026.08.3.0. Changing this needs a reinstall."))
+    # The install no longer uses the GitHub API (and upstream's token never took effect).
+    remove_var(egg, egg_id, "GITHUB_USER")
+    remove_var(egg, egg_id, "GITHUB_OAUTH_TOKEN")
+    add_var(egg, egg_id, "WORKSHOP_MODS", "Workshop Mods",
+            "Steam Workshop IDs of tModLoader mods, separated by commas (the number at the end of the mod's "
+            "Workshop page address). They are downloaded and enabled when the server is reinstalled; "
+            "reinstall again to update them. IDs removed from the list are deleted and disabled.",
+            "", "nullable|regex:/^[0-9 ,]*$/|max:2000")
+
+
+def patch_tmodloader_startup(egg, _upstream, egg_id):
+    if TML_WORKSHOP_ARG.strip() in egg["startup"]:
+        sys.exit(f"{egg_id}: upstream startup already has -steamworkshopfolder; review the patch")
+    add_prefix(egg, egg_id, dotnet_prefix("tModLoader", ".tml"), "./tModLoaderServer ")
+    egg["startup"] += TML_WORKSHOP_ARG
+
+
+# --- Factorio ------------------------------------------------------------------------
+
+FACTORIO_UPSTREAM_STARTUP = (
+    '[ ! -f "./saves/{{SAVE_NAME}}.zip" ] && ./bin/x64/factorio --create ./saves/{{SAVE_NAME}}.zip '
+    '--map-gen-settings data/map-gen-settings.json --map-settings data/map-settings.json; '
+    './bin/x64/factorio --port {{SERVER_PORT}} --server-settings data/server-settings.json '
+    '--start-server saves/{{SAVE_NAME}}.zip $( [ "$RCON_ENABLED" = "1" ] && echo "--rcon-port {{RCON_PORT}} '
+    '--rcon-password {{RCON_PASSWORD}}" )'
+)
+FACTORIO_DLC = ("elevated-rails", "quality", "recycler", "space-age")   # "expansion_required" in data/*/info.json
+
+# Replaces upstream's startup. The image runs `echo -e ${STARTUP}` then `eval` unquoted, so it
+# avoids glob characters (* ? [ ]) and backslashes (awk builds [ ] with %c 91/93), and "}}",
+# which the entrypoint rewrites. Order:
+#  1. Space Age guard: a save that has run with Space Age is not started with it off (Factorio
+#     would strip the DLC content from it). The marker file is written in step 6.
+#  2. RCON: when on, RCON Port must be set and differ from the game port, password >= 8.
+#  3. mods/mod-list.json: created if missing, DLC mods switched on/off to match Space Age.
+#  4. Warn when there's no factorio.com login (the server then isn't in the public list).
+#  5. Create the save on first start, now that the Space Age setting is applied.
+#  6. Mark the save as played with Space Age, then start.
+FACTORIO_STARTUP = (
+    'if test "${SPACE_AGE}" != 1 && test -f "saves/${SAVE_NAME}.space-age" ; then '
+    'echo "ERROR: The save ${SAVE_NAME} has been played with Space Age. Starting it with Space Age off removes the '
+    'Space Age content (planets, buildings, items) from the save permanently. Turn Space Age back on in Startup. '
+    'To remove it anyway, back up the save, delete saves/${SAVE_NAME}.space-age, then restart." ; exit 1 ; fi ; '
+    'if test "${RCON_ENABLED}" = 1 ; then '
+    'test -n "${RCON_PORT}" && test "${RCON_PORT}" != "${SERVER_PORT}" || { echo "ERROR: RCON is on, but RCON Port is '
+    'empty or the same as the game port. Open the Network tab, click Create Allocation, enter the new port in Startup '
+    'as RCON Port, then restart." ; exit 1 ; } ; '
+    'test "${#RCON_PASSWORD}" -ge 8 || { echo "ERROR: RCON is on, so RCON Password must be at least 8 characters. '
+    'Set it in Startup, then restart." ; exit 1 ; } ; '
+    'set -- --rcon-port "${RCON_PORT}" --rcon-password "${RCON_PASSWORD}" ; '
+    'echo "Ports: game ${SERVER_PORT} UDP, RCON ${RCON_PORT} TCP" ; '
+    'else set -- ; echo "Ports: game ${SERVER_PORT} UDP" ; fi ; '
+    'mkdir -p mods saves ; '
+    'FDLC=$(test "${SPACE_AGE}" = 1 && echo true || echo false) ; '
+    'test -f mods/mod-list.json || awk -v on=${FDLC} '
+    "'function e(n, v) {printf \"%s{%sname%s: %s%s%s, %senabled%s: %s}%c\", s, q, q, q, n, q, q, q, v, 10 ; s = \", \"} "
+    "BEGIN {q = sprintf(\"%c\", 34) ; printf \"{%smods%s: %c%c\", q, q, 91, 10 ; "
+    + " ; ".join(['e("base", "true")'] + [f'e("{m}", on)' for m in FACTORIO_DLC]) +
+    " ; printf \"%c}%c\", 93, 10}' > mods/mod-list.json ; "
+    "awk -v on=${FDLC} '/\"name\"/ {d = ($0 ~ /\"(" + "|".join(FACTORIO_DLC) + ")\"/)} "
+    "d && /\"enabled\"/ {sub(/true|false/, on) ; d = 0} {print}' mods/mod-list.json > mods/mod-list.json.new && "
+    'mv -f mods/mod-list.json.new mods/mod-list.json ; '
+    'if test "${FDLC}" = true ; then echo "Space Age: on. Players need the Space Age expansion to join." ; '
+    'else echo "Space Age: off." ; fi ; '
+    'test -n "${SERVER_USERNAME}" && test -n "${SERVER_TOKEN}" || echo "WARNING: No factorio.com username and token '
+    'set, so the server is not in the public server list. Players can still join by address. Enter both in Startup '
+    '(the token is on factorio.com/profile)." ; '
+    'if test ! -f "saves/${SAVE_NAME}.zip" ; then ./bin/x64/factorio --create "saves/${SAVE_NAME}.zip" '
+    '--map-gen-settings data/map-gen-settings.json --map-settings data/map-settings.json || exit 1 ; fi ; '
+    'test "${FDLC}" = true && test -d data/space-age && touch "saves/${SAVE_NAME}.space-age" ; '
+    './bin/x64/factorio --port ${SERVER_PORT} --server-settings data/server-settings.json '
+    '--start-server "saves/${SAVE_NAME}.zip" "$@"'
+)
+
+
+def patch_factorio_install(egg, _upstream, egg_id):
+    replace_install(egg, egg_id, FACTORIO_SCRIPT,
+                    ("factorio.com/api/latest-releases", "get-download", "map-settings.example.json"))
+
+
+def patch_factorio_variables(egg, _upstream, egg_id):
+    update_var(egg, egg_id, "MAX_SLOTS", user_editable=True)
+    update_var(egg, egg_id, "FACTORIO_VERSION", description=(
+        "latest (newest stable), experimental, or an exact version such as 2.0.72. Changing this needs a reinstall."))
+    update_var(egg, egg_id, "SERVER_USERNAME", default_value="", rules="nullable|string|max:40",
+               description="Your factorio.com username. With the token below, it puts the server in the public "
+                           "server list. Leave both empty for a server players join by address.")
+    update_var(egg, egg_id, "SERVER_TOKEN", default_value="", rules="nullable|alpha_num|max:100",
+               description="Your factorio.com token (on factorio.com/profile). Needed with the username for the "
+                           "public server list.")
+    update_var(egg, egg_id, "RCON_ENABLED", name="RCON Enabled",
+               description="1 turns on RCON (remote console, TCP). Needs RCON Port and RCON Password.")
+    update_var(egg, egg_id, "RCON_PORT", name="RCON Port", rules="nullable|integer|between:1024,65535",
+               description="Only when RCON is on: add an allocation in the Network tab and enter its port here.")
+    update_var(egg, egg_id, "RCON_PASSWORD", name="RCON Password", rules="nullable|string|max:64",
+               description="Only when RCON is on: at least 8 characters. RCON is reachable from the internet on "
+                           "the RCON Port, so use a strong password.")
+    add_var(egg, egg_id, "SPACE_AGE", "Space Age",
+            "1 turns on the Space Age expansion (with Quality and Elevated Rails); players then need Space Age "
+            "to join. 0 turns it off so anyone with Factorio can join. Applied on restart. A save that has been "
+            "played with Space Age won't start with it off, because that would remove the Space Age content.",
+            "1", "required|boolean")
+
+
+def patch_factorio_startup(egg, _upstream, egg_id):
+    if egg["startup"] != FACTORIO_UPSTREAM_STARTUP:
         sys.exit(f"{egg_id}: upstream startup changed; review the patch")
-    bad = set(VINTAGESTORY_PREFIX) & set("*?[]\\")
-    if bad:
-        sys.exit(f"{egg_id}: startup prefix contains unsafe characters {sorted(bad)}")
-    egg["startup"] = VINTAGESTORY_PREFIX + egg["startup"]
+    bad = set(FACTORIO_STARTUP) & set("*?[]\\")
+    if bad or "}}" in FACTORIO_STARTUP:
+        sys.exit(f"{egg_id}: startup contains unsafe characters {sorted(bad)} or '}}}}'")
+    egg["startup"] = FACTORIO_STARTUP
 
 
 PATCHES = {
@@ -650,6 +889,19 @@ PATCHES = {
     "vintagestory_install": patch_vintagestory_install,
     "vintagestory_variables": patch_vintagestory_variables,
     "vintagestory_startup": patch_vintagestory_startup,
+    "terraria_install": patch_terraria_install,
+    "terraria_variables": patch_terraria_variables,
+    "tshock_install": patch_tshock_install,
+    "tshock_images": patch_tshock_images,
+    "tshock_variables": patch_tshock_variables,
+    "tshock_startup": patch_tshock_startup,
+    "tmodloader_install": patch_tmodloader_install,
+    "tmodloader_images": patch_tmodloader_images,
+    "tmodloader_variables": patch_tmodloader_variables,
+    "tmodloader_startup": patch_tmodloader_startup,
+    "factorio_install": patch_factorio_install,
+    "factorio_variables": patch_factorio_variables,
+    "factorio_startup": patch_factorio_startup,
 }
 
 

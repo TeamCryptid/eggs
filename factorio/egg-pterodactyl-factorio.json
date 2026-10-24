@@ -1,0 +1,182 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": "https://raw.githubusercontent.com/TeamCryptid/eggs/main/factorio/egg-pterodactyl-factorio.json"
+    },
+    "exported_at": "2026-01-11T12:43:05+00:00",
+    "name": "Factorio",
+    "author": "parker@parkervcp.com",
+    "description": "The vanilla Factorio server.\r\n\r\nhttps://www.factorio.com/",
+    "features": null,
+    "docker_images": {
+        "ghcr.io/parkervcp/yolks:debian": "ghcr.io/parkervcp/yolks:debian"
+    },
+    "file_denylist": [],
+    "startup": "if test \"${SPACE_AGE}\" != 1 && test -f \"saves/${SAVE_NAME}.space-age\" ; then echo \"ERROR: The save ${SAVE_NAME} has been played with Space Age. Starting it with Space Age off removes the Space Age content (planets, buildings, items) from the save permanently. Turn Space Age back on in Startup. To remove it anyway, back up the save, delete saves/${SAVE_NAME}.space-age, then restart.\" ; exit 1 ; fi ; if test \"${RCON_ENABLED}\" = 1 ; then test -n \"${RCON_PORT}\" && test \"${RCON_PORT}\" != \"${SERVER_PORT}\" || { echo \"ERROR: RCON is on, but RCON Port is empty or the same as the game port. Open the Network tab, click Create Allocation, enter the new port in Startup as RCON Port, then restart.\" ; exit 1 ; } ; test \"${#RCON_PASSWORD}\" -ge 8 || { echo \"ERROR: RCON is on, so RCON Password must be at least 8 characters. Set it in Startup, then restart.\" ; exit 1 ; } ; set -- --rcon-port \"${RCON_PORT}\" --rcon-password \"${RCON_PASSWORD}\" ; echo \"Ports: game ${SERVER_PORT} UDP, RCON ${RCON_PORT} TCP\" ; else set -- ; echo \"Ports: game ${SERVER_PORT} UDP\" ; fi ; mkdir -p mods saves ; FDLC=$(test \"${SPACE_AGE}\" = 1 && echo true || echo false) ; test -f mods/mod-list.json || awk -v on=${FDLC} 'function e(n, v) {printf \"%s{%sname%s: %s%s%s, %senabled%s: %s}%c\", s, q, q, q, n, q, q, q, v, 10 ; s = \", \"} BEGIN {q = sprintf(\"%c\", 34) ; printf \"{%smods%s: %c%c\", q, q, 91, 10 ; e(\"base\", \"true\") ; e(\"elevated-rails\", on) ; e(\"quality\", on) ; e(\"recycler\", on) ; e(\"space-age\", on) ; printf \"%c}%c\", 93, 10}' > mods/mod-list.json ; awk -v on=${FDLC} '/\"name\"/ {d = ($0 ~ /\"(elevated-rails|quality|recycler|space-age)\"/)} d && /\"enabled\"/ {sub(/true|false/, on) ; d = 0} {print}' mods/mod-list.json > mods/mod-list.json.new && mv -f mods/mod-list.json.new mods/mod-list.json ; if test \"${FDLC}\" = true ; then echo \"Space Age: on. Players need the Space Age expansion to join.\" ; else echo \"Space Age: off.\" ; fi ; test -n \"${SERVER_USERNAME}\" && test -n \"${SERVER_TOKEN}\" || echo \"WARNING: No factorio.com username and token set, so the server is not in the public server list. Players can still join by address. Enter both in Startup (the token is on factorio.com/profile).\" ; if test ! -f \"saves/${SAVE_NAME}.zip\" ; then ./bin/x64/factorio --create \"saves/${SAVE_NAME}.zip\" --map-gen-settings data/map-gen-settings.json --map-settings data/map-settings.json || exit 1 ; fi ; test \"${FDLC}\" = true && test -d data/space-age && touch \"saves/${SAVE_NAME}.space-age\" ; ./bin/x64/factorio --port ${SERVER_PORT} --server-settings data/server-settings.json --start-server \"saves/${SAVE_NAME}.zip\" \"$@\"",
+    "config": {
+        "files": "{\n    \"data\\/server-settings.json\": {\n        \"parser\": \"json\",\n        \"find\": {\n            \"name\": \"{{server.build.env.SERVER_NAME}}\",\n            \"description\": \"{{server.build.env.SERVER_DESC}}\",\n            \"max_players\": \"{{server.build.env.MAX_SLOTS}}\",\n            \"username\": \"{{server.build.env.SERVER_USERNAME}}\",\n            \"token\": \"{{server.build.env.SERVER_TOKEN}}\",\n            \"autosave_interval\": \"{{server.build.env.SAVE_INTERVAL}}\",\n            \"autosave_slots\": \"{{server.build.env.SAVE_SLOTS}}\",\n            \"afk_autokick_interval\": \"{{server.build.env.AFK_KICK}}\",\n            \"game_password\": \"{{server.build.env.SERVER_PASSWORD}}\"\n        }\n    }\n}",
+        "startup": "{\n    \"done\": \"Hosting game at\"\n}",
+        "logs": "{}",
+        "stop": "/quit"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/bash\n## ---------------------------------------------------------------------------\n## TeamCryptid eggs: Factorio headless server install.\n## Replaces the upstream install script (pelican-eggs/games-standalone, MIT).\n##\n## Changes from upstream:\n##   - any failure exits 1 (upstream reported \"Installation completed\" for an\n##     unknown version)\n##   - verifies the download against factorio.com's published SHA-256 sums\n##   - staged on the server's disk, not the 100 MB /tmp; game files are replaced\n##     only after the download is verified\n##   - map-settings.json is kept on reinstall (upstream checked the wrong path and\n##     reset it every time); server-settings.json and map-gen-settings.json too\n##   - the save is created by the startup command on first start, after the Space\n##     Age setting is applied (upstream created it here with Space Age always on)\n## Server Files: /mnt/server\n## ---------------------------------------------------------------------------\n\nfatal() {\n    echo \"-----------------------------------------\"\n    echo \"Installation failed: $*\"\n    echo \"-----------------------------------------\"\n    exit 1\n}\n\nWORK=/mnt/server/.factorio-install\ntrap 'rm -rf \"${WORK}\"' EXIT\n\nif ! command -v xz >/dev/null; then\n    echo \"Installing xz-utils\"\n    { apt-get update -qq && apt-get install -y -qq xz-utils; } >/dev/null 2>&1 || fatal \"could not install xz-utils\"\nfi\n\nLATEST=$(curl -sfSL https://factorio.com/api/latest-releases) || fatal \"could not reach factorio.com\"\ncase \"${FACTORIO_VERSION}\" in\n    \"\"|latest)    VERSION=$(jq -r '.stable.headless // empty' <<< \"${LATEST}\") ;;\n    experimental) VERSION=$(jq -r '.experimental.headless // empty' <<< \"${LATEST}\") ;;\n    *)            VERSION=\"${FACTORIO_VERSION}\" ;;\nesac\necho \"${VERSION}\" | grep -qE '^[0-9]+\\.[0-9]+\\.[0-9]+$' || fatal \"'${FACTORIO_VERSION}' is not a version (use latest, experimental, or e.g. 2.0.72)\"\n\ncd /mnt/server || fatal \"cannot enter /mnt/server\"\nrm -rf \"${WORK}\" && mkdir -p \"${WORK}/new\" || fatal \"cannot create ${WORK}\"\n\nURL=\"https://www.factorio.com/get-download/${VERSION}/headless/linux64\"\necho \"Factorio: ${VERSION}\"\nFINAL=$(curl -sfSL -o \"${WORK}/factorio.tar.xz\" -w '%{url_effective}' \"${URL}\") || fatal \"download failed. Check that Factorio ${VERSION} exists.\"\nFILE=$(basename \"${FINAL%%\\?*}\")\nEXPECTED=$(curl -sfSL https://www.factorio.com/download/sha256sums/ | awk -v f=\"${FILE}\" '$2 == f {print $1}')\nif [ -n \"${EXPECTED}\" ]; then\n    ACTUAL=$(sha256sum \"${WORK}/factorio.tar.xz\" | cut -d' ' -f1)\n    [ \"${ACTUAL}\" = \"${EXPECTED}\" ] || fatal \"checksum mismatch for ${FILE} (expected ${EXPECTED}, got ${ACTUAL})\"\n    echo \"SHA-256 verified: ${FILE}\"\nelse\n    echo \"WARNING: factorio.com lists no checksum for ${FILE}; not verified\"\nfi\n\ntar -xJf \"${WORK}/factorio.tar.xz\" --strip-components=1 -C \"${WORK}/new\" || fatal \"could not unpack the server archive\"\nrm -f \"${WORK}/factorio.tar.xz\"\n[ -x \"${WORK}/new/bin/x64/factorio\" ] || fatal \"the archive does not contain bin/x64/factorio\"\n\n# Game-owned files: bin/ and each folder in data/ (base, core, space-age...) are\n# replaced; the rest of data/ is merged, so the customer's settings files stay.\nmkdir -p data\nfor entry in \"${WORK}/new\"/*; do\n    name=$(basename \"${entry}\")\n    if [ \"${name}\" = \"data\" ]; then\n        for d in \"${entry}\"/*; do\n            dn=$(basename \"${d}\")\n            if [ -d \"${d}\" ]; then\n                rm -rf \"data/${dn}\" && mv \"${d}\" \"data/${dn}\" || fatal \"could not move data/${dn} into place\"\n            else\n                mv -f \"${d}\" \"data/${dn}\" || fatal \"could not move data/${dn} into place\"\n            fi\n        done\n    else\n        rm -rf \"/mnt/server/${name}\" && mv \"${entry}\" \"/mnt/server/${name}\" || fatal \"could not move ${name} into place\"\n    fi\ndone\n\nfor f in server-settings map-gen-settings map-settings; do\n    if [ -f \"data/${f}.json\" ]; then\n        echo \"Keeping existing data/${f}.json\"\n    else\n        cp \"data/${f}.example.json\" \"data/${f}.json\" || fatal \"data/${f}.example.json is missing\"\n        echo \"Created data/${f}.json\"\n    fi\ndone\nmkdir -p saves mods\necho \"${VERSION}\" > .factorio-version\n\necho \"-----------------------------------------\"\necho \"Installation completed: Factorio ${VERSION}\"\necho \"-----------------------------------------\"\n",
+            "container": "ghcr.io/parkervcp/installers:debian",
+            "entrypoint": "bash"
+        }
+    },
+    "variables": [
+        {
+            "name": "AFK Kick",
+            "description": "Time specified in minutes to kick AFK players.\r\n0 is off",
+            "env_variable": "AFK_KICK",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|numeric|digits_between:1,3",
+            "field_type": "text"
+        },
+        {
+            "name": "Factorio Version",
+            "description": "latest (newest stable), experimental, or an exact version such as 2.0.72. Changing this needs a reinstall.",
+            "env_variable": "FACTORIO_VERSION",
+            "default_value": "latest",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|between:3,12",
+            "field_type": "text"
+        },
+        {
+            "name": "Maximum Slots",
+            "description": "Total number of slots to allow on the server.",
+            "env_variable": "MAX_SLOTS",
+            "default_value": "20",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|numeric|digits_between:1,3",
+            "field_type": "text"
+        },
+        {
+            "name": "RCON Enabled",
+            "description": "1 turns on RCON (remote console, TCP). Needs RCON Port and RCON Password.",
+            "env_variable": "RCON_ENABLED",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|boolean",
+            "field_type": "text"
+        },
+        {
+            "name": "RCON Password",
+            "description": "Only when RCON is on: at least 8 characters. RCON is reachable from the internet on the RCON Port, so use a strong password.",
+            "env_variable": "RCON_PASSWORD",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:64",
+            "field_type": "text"
+        },
+        {
+            "name": "RCON Port",
+            "description": "Only when RCON is on: add an allocation in the Network tab and enter its port here.",
+            "env_variable": "RCON_PORT",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|integer|between:1024,65535",
+            "field_type": "text"
+        },
+        {
+            "name": "Auto Save Interval",
+            "description": "Time between auto saves specified in minutes",
+            "env_variable": "SAVE_INTERVAL",
+            "default_value": "10",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|numeric|digits_between:1,3",
+            "field_type": "text"
+        },
+        {
+            "name": "Save Name",
+            "description": "The save name for the server.",
+            "env_variable": "SAVE_NAME",
+            "default_value": "gamesave",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "alpha_dash|between:1,100",
+            "field_type": "text"
+        },
+        {
+            "name": "Auto Save Slots",
+            "description": "The number of auto saves to keep.",
+            "env_variable": "SAVE_SLOTS",
+            "default_value": "5",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|numeric|digits_between:1,3",
+            "field_type": "text"
+        },
+        {
+            "name": "Server Description",
+            "description": "Description of the game that will appear in the listing.",
+            "env_variable": "SERVER_DESC",
+            "default_value": "Description",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:200",
+            "field_type": "text"
+        },
+        {
+            "name": "Server Name",
+            "description": "Name of the game as it will appear in the game listing",
+            "env_variable": "SERVER_NAME",
+            "default_value": "Factorio Server",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:100",
+            "field_type": "text"
+        },
+        {
+            "name": "Server password",
+            "description": "The password for the server.",
+            "env_variable": "SERVER_PASSWORD",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "max:40",
+            "field_type": "text"
+        },
+        {
+            "name": "Server Token",
+            "description": "Your factorio.com token (on factorio.com/profile). Needed with the username for the public server list.",
+            "env_variable": "SERVER_TOKEN",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|alpha_num|max:100",
+            "field_type": "text"
+        },
+        {
+            "name": "Server Username",
+            "description": "Your factorio.com username. With the token below, it puts the server in the public server list. Leave both empty for a server players join by address.",
+            "env_variable": "SERVER_USERNAME",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:40",
+            "field_type": "text"
+        },
+        {
+            "name": "Space Age",
+            "description": "1 turns on the Space Age expansion (with Quality and Elevated Rails); players then need Space Age to join. 0 turns it off so anyone with Factorio can join. Applied on restart. A save that has been played with Space Age won't start with it off, because that would remove the Space Age content.",
+            "env_variable": "SPACE_AGE",
+            "default_value": "1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|boolean",
+            "field_type": "text"
+        }
+    ]
+}

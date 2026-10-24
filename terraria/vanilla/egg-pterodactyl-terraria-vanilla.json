@@ -1,0 +1,122 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PANEL",
+    "meta": {
+        "update_url": "https://raw.githubusercontent.com/TeamCryptid/eggs/main/terraria/vanilla/egg-pterodactyl-terraria-vanilla.json",
+        "version": "PTDL_v2"
+    },
+    "exported_at": "2024-06-01T00:17:13+00:00",
+    "name": "Terraria Vanilla",
+    "author": "iamkubi@gmail.com",
+    "description": "Dig, fight, explore, build! Nothing is impossible in this action-packed adventure game.",
+    "features": null,
+    "docker_images": {
+        "Debian": "ghcr.io/parkervcp/yolks:debian"
+    },
+    "file_denylist": [],
+    "startup": "./TerrariaServer.bin.x86_64 -config serverconfig.txt",
+    "config": {
+        "files": "{\r\n    \"serverconfig.txt\": {\r\n        \"parser\": \"properties\",\r\n        \"find\": {\r\n            \"worldpath\": \"/home/container/saves/Worlds\",\r\n            \"worldname\": \"{{server.build.env.WORLD_NAME}}\",\r\n            \"world\": \"/home/container/saves/Worlds/{{server.build.env.WORLD_NAME}}.wld\",\r\n            \"difficulty\": \"{{server.build.env.WORLD_DIFFICULTY}}\",\r\n            \"autocreate\": \"{{server.build.env.WORLD_SIZE}}\",\r\n            \"port\": \"{{server.build.default.port}}\",\r\n            \"maxplayers\": \"{{server.build.env.MAX_PLAYERS}}\",\r\n            \"motd\": \"{{server.build.env.SERVER_MOTD}}\",\r\n            \"seed\": \"{{server.build.env.WORLD_SEED}}\",\r\n            \"password\": \"{{server.build.env.PASSWORD}}\",\r\n            \"npcstream\": \"{{server.build.env.NPCSTREAM}}\"\r\n        }\r\n    }\r\n}",
+        "logs": "{}",
+        "startup": "{\r\n    \"done\": \"Type 'help' for a list of commands\"\r\n}",
+        "stop": "exit"
+    },
+    "scripts": {
+        "installation": {
+            "container": "ghcr.io/parkervcp/installers:debian",
+            "entrypoint": "bash",
+            "script": "#!/bin/bash\n## ---------------------------------------------------------------------------\n## TeamCryptid eggs: Terraria (vanilla) server install.\n## Replaces the upstream install script (pelican-eggs/games-standalone, MIT).\n##\n## Changes from upstream:\n##   - any failure exits 1 (upstream reported \"Install complete\" even when nothing\n##     was installed, e.g. for an unknown version)\n##   - exact versions download from terraria.org's own API (1.4.4.9 or 1449);\n##     only versions the API doesn't serve fall back to the wiki's download links\n##   - staged on the server's disk, not the 100 MB /tmp; the zip is removed afterwards\n##   - serverconfig.txt is created only when missing, so settings customers add\n##     there survive a reinstall\n## Server Files: /mnt/server\n## ---------------------------------------------------------------------------\n\nfatal() {\n    echo \"-----------------------------------------\"\n    echo \"Installation failed: $*\"\n    echo \"-----------------------------------------\"\n    exit 1\n}\n\nAPI=\"https://terraria.org/api\"\nWORK=/mnt/server/.terraria-install\ntrap 'rm -rf \"${WORK}\"' EXIT\n\ncd /mnt/server || fatal \"cannot enter /mnt/server\"\nrm -rf \"${WORK}\" && mkdir -p \"${WORK}\" || fatal \"cannot create ${WORK}\"\n\nif [ -z \"${TERRARIA_VERSION}\" ] || [ \"${TERRARIA_VERSION}\" = \"latest\" ]; then\n    FILE=$(curl -sfSL \"${API}/get/dedicated-servers-names\" | jq -r '.[0] // empty') || fatal \"could not reach terraria.org\"\n    [ -n \"${FILE}\" ] || fatal \"terraria.org listed no server versions\"\nelse\n    # 1.4.4.9 and 1449 both mean terraria-server-1449.zip\n    DIGITS=$(echo \"${TERRARIA_VERSION}\" | tr -d '.')\n    echo \"${DIGITS}\" | grep -qE '^[0-9]+$' || fatal \"'${TERRARIA_VERSION}' is not a version (use latest, or e.g. 1.4.4.9 or 1449)\"\n    FILE=\"terraria-server-${DIGITS}.zip\"\nfi\nNUM=$(echo \"${FILE}\" | sed -E 's/^terraria-server-([0-9]+)\\.zip$/\\1/')\necho \"${NUM}\" | grep -qE '^[0-9]+$' || fatal \"unexpected file name from terraria.org: ${FILE}\"\n\nURL=\"${API}/download/pc-dedicated-server/${FILE}\"\nif ! curl -sfSL -o \"${WORK}/server.zip\" \"${URL}\"; then\n    # Older versions aren't on the API; the wiki links to terraria.org's archive for them.\n    echo \"terraria.org's API doesn't serve ${FILE}; looking it up on the wiki\"\n    URL=$(curl -sfSL \"https://terraria.wiki.gg/wiki/Server\" | grep -Eo \"https://[^\\\"' ]+/${FILE}\" | head -1)\n    [ -n \"${URL}\" ] || fatal \"Terraria server ${TERRARIA_VERSION} not found. Check the version number.\"\n    curl -sfSL -o \"${WORK}/server.zip\" \"${URL}\" || fatal \"download failed: ${URL}\"\nfi\necho \"Downloaded: ${URL}\"\n\nunzip -tqq \"${WORK}/server.zip\" >/dev/null || fatal \"the download is not a valid zip\"\nunzip -l \"${WORK}/server.zip\" \"${NUM}/Linux/TerrariaServer.bin.x86_64\" >/dev/null 2>&1 || fatal \"Terraria server ${NUM} has no Linux version\"\nunzip -q \"${WORK}/server.zip\" \"${NUM}/Linux/*\" -d \"${WORK}\" || fatal \"could not unpack the server archive\"\nrm -f \"${WORK}/server.zip\"\n\ncp -a \"${WORK}/${NUM}/Linux/.\" /mnt/server/ || fatal \"could not copy the server files into place\"\nchmod +x TerrariaServer.bin.x86_64 TerrariaServer\nrm -f terraria-server-*.zip   # left behind by the upstream install\n\nif [ -f serverconfig.txt ]; then\n    echo \"Keeping existing serverconfig.txt\"\nelse\n    echo \"Generating serverconfig.txt\"\n    cat <<EOF > serverconfig.txt\nworldpath=/home/container/saves/Worlds\nworldname=default\nworld=/home/container/saves/Worlds/default.wld\ndifficulty=0\nautocreate=1\nport=7777\nmaxplayers=8\nEOF\nfi\nmkdir -p saves/Worlds\necho \"${NUM}\" > .terraria-version\n\necho \"-----------------------------------------\"\necho \"Installation completed: Terraria server ${NUM}\"\necho \"-----------------------------------------\"\n"
+        }
+    },
+    "variables": [
+        {
+            "name": "Terraria version",
+            "description": "latest, or an exact version such as 1.4.4.9 (or 1449). Changing this needs a reinstall.",
+            "env_variable": "TERRARIA_VERSION",
+            "default_value": "latest",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:20",
+            "field_type": "text"
+        },
+        {
+            "name": "World Name",
+            "description": "The name for the world file.",
+            "env_variable": "WORLD_NAME",
+            "default_value": "world",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:20",
+            "field_type": "text"
+        },
+        {
+            "name": "Max Players",
+            "description": "The maximum number of players a server will hold.",
+            "env_variable": "MAX_PLAYERS",
+            "default_value": "8",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|numeric|max:255",
+            "field_type": "text"
+        },
+        {
+            "name": "World Size",
+            "description": "Defines the worlds size. 3 sizes 1 (small), 2 (medium), 3 (large).",
+            "env_variable": "WORLD_SIZE",
+            "default_value": "1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|numeric|in:1,2,3",
+            "field_type": "text"
+        },
+        {
+            "name": "Difficulty",
+            "description": "Difficulty of a newly created world: 0 normal, 1 expert, 2 master, 3 journey. An existing world keeps its difficulty.",
+            "env_variable": "WORLD_DIFFICULTY",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|numeric|in:0,1,2,3",
+            "field_type": "text"
+        },
+        {
+            "name": "MOTD",
+            "description": "Server MOTD",
+            "env_variable": "SERVER_MOTD",
+            "default_value": "Welcome!",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:128",
+            "field_type": "text"
+        },
+        {
+            "name": "World Seed",
+            "description": "The Seed to use when creating the World",
+            "env_variable": "WORLD_SEED",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:20",
+            "field_type": "text"
+        },
+        {
+            "name": "Password",
+            "description": "The password which should be used.",
+            "env_variable": "PASSWORD",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "NPCStream",
+            "description": "Reduces enemy skipping but increases bandwidth usage. The lower the number the less skipping will happen, but more data is sent. 0 is off.",
+            "env_variable": "NPCSTREAM",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|int|between:0,60",
+            "field_type": "text"
+        }
+    ]
+}

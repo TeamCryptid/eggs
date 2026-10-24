@@ -199,6 +199,55 @@
         "vintagestory_variables",
         "vintagestory_startup"
       ]
+    },
+    {
+      "id": "terraria",
+      "upstream": "standalone",
+      "upstream_path": "terraria/vanilla/egg-pterodactyl-terraria-vanilla.json",
+      "upstream_sha256": "c6d0c28175edcac48fa176faa73467948e44bc1c72b7b40fd5cb073da5c53365",
+      "path": "terraria/vanilla/egg-pterodactyl-terraria-vanilla.json",
+      "patches": [
+        "terraria_install",
+        "terraria_variables"
+      ]
+    },
+    {
+      "id": "tshock",
+      "upstream": "standalone",
+      "upstream_path": "terraria/tshock/egg-pterodactyl-tshock.json",
+      "upstream_sha256": "8c1b564d3d1c4792d88e28ab0387bda7355b0325c500b1c576dbe1ff93ab55a6",
+      "path": "terraria/tshock/egg-pterodactyl-tshock.json",
+      "patches": [
+        "tshock_install",
+        "tshock_images",
+        "tshock_variables",
+        "tshock_startup"
+      ]
+    },
+    {
+      "id": "tmodloader",
+      "upstream": "standalone",
+      "upstream_path": "terraria/tmodloader/egg-pterodactyl-t-modloader.json",
+      "upstream_sha256": "5735222af56f6e94bc9bec9288c246eae7de4408fc10ed46bd4471a0d98ebe1e",
+      "path": "terraria/tmodloader/egg-pterodactyl-t-modloader.json",
+      "patches": [
+        "tmodloader_install",
+        "tmodloader_images",
+        "tmodloader_variables",
+        "tmodloader_startup"
+      ]
+    },
+    {
+      "id": "factorio",
+      "upstream": "standalone",
+      "upstream_path": "factorio/factorio/egg-pterodactyl-factorio.json",
+      "upstream_sha256": "8aee840b97ffc8e89c6b9d2e318140760031c814882a22e892debf76ed469ea0",
+      "path": "factorio/egg-pterodactyl-factorio.json",
+      "patches": [
+        "factorio_install",
+        "factorio_variables",
+        "factorio_startup"
+      ]
     }
   ]
 }
