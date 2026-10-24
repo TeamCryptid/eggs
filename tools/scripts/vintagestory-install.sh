@@ -5,6 +5,7 @@
 ##
 ## Changes from upstream:
 ##   - any failure exits 1 (upstream used a bare `exit`, so the panel showed success)
+##   - stages the download in /mnt/server/.vs-install, not the 100 MB /tmp
 ##   - downloads and verifies (MD5 from the release API) BEFORE touching the
 ##     installed files; a failed download leaves the server as it was
 ##   - release API over https
@@ -27,7 +28,10 @@ API="https://api.vintagestory.at"
 CDN="https://cdn.vintagestory.at/gamefiles"
 BRANCH="${FILES_BRANCH:-stable}"
 VERSION="${RELEASE_VERSION:-latest}"
-WORK=$(mktemp -d)
+# Staging lives on the server volume, not /tmp: Wings gives the install container
+# a 100 MB tmpfs /tmp and the server unpacks to ~330 MB. Same filesystem as the
+# install, so the final move is a rename and needs no extra space.
+WORK=/mnt/server/.vs-install
 trap 'rm -rf "${WORK}"' EXIT
 
 case "${BRANCH}" in
@@ -63,6 +67,7 @@ echo "Version:  ${VERSION}"
 echo "Download: ${DOWNLOAD_URL}"
 
 cd /mnt/server || fatal "cannot enter /mnt/server"
+rm -rf "${WORK}" && mkdir -p "${WORK}" || fatal "cannot create ${WORK}"
 
 # Downgrade guard.
 if [ -f .vs-version ]; then
@@ -84,7 +89,8 @@ if [ -n "${EXPECTED_MD5}" ]; then
 fi
 
 mkdir -p "${WORK}/new"
-tar -xzf "${WORK}/vs_server.tar.gz" -C "${WORK}/new" || fatal "the download is not a valid server archive"
+tar -xzf "${WORK}/vs_server.tar.gz" -C "${WORK}/new" || fatal "could not unpack the server archive (damaged download, or the server is out of disk space)"
+rm -f "${WORK}/vs_server.tar.gz"
 [ -f "${WORK}/new/VintagestoryServer.dll" ] || fatal "the archive does not contain VintagestoryServer.dll"
 DOTNET_MAJOR=$(jq -r '.runtimeOptions.tfm // empty' "${WORK}/new/VintagestoryServer.runtimeconfig.json" 2>/dev/null | sed -E 's/^net([0-9]+).*/\1/')
 
@@ -94,7 +100,17 @@ if [ -d assets ]; then
     echo "Removing old installation files"
     rm -rf assets/ Lib/
 fi
-cp -a "${WORK}/new/." /mnt/server/ || fatal "could not copy the new server files into place"
+for entry in "${WORK}/new"/* "${WORK}/new"/.[!.]*; do
+    [ -e "${entry}" ] || continue
+    name=$(basename "${entry}")
+    [ "${name}" = "data" ] && continue
+    if [ -d "${entry}" ] && [ -d "/mnt/server/${name}" ]; then
+        # e.g. Mods/: merge, so files a customer added there are kept (as upstream did)
+        cp -a "${entry}/." "/mnt/server/${name}/" || fatal "could not copy ${name} into place"
+    else
+        rm -rf "/mnt/server/${name}" && mv "${entry}" "/mnt/server/${name}" || fatal "could not move ${name} into place"
+    fi
+done
 rm -f server.sh
 
 echo "${VERSION}" > .vs-version
