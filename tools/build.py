@@ -95,6 +95,9 @@ EGGS = [
     ("factorio", "standalone", "factorio/factorio/egg-pterodactyl-factorio.json",
      "factorio/egg-pterodactyl-factorio.json",
      ["factorio_install", "factorio_variables", "factorio_startup"]),
+    ("7daystodie", "steamcmd", "7_days_to_die/egg-pterodactyl-7-days-to-die.json",
+     "7daystodie/egg-pterodactyl-7-days-to-die.json",
+     ["7dtd_install", "7dtd_variables", "7dtd_startup"]),
 ]
 
 # Plain files the eggs download at install time, hosted here instead of upstream.
@@ -853,6 +856,116 @@ def patch_factorio_variables(egg, _upstream, egg_id):
             "1", "required|boolean")
 
 
+# --- 7 Days to Die --------------------------------------------------------------------
+
+SDTD_UPSTREAM_STARTUP = (
+    './7DaysToDieServer.x86_64 -configfile=serverconfig.xml -quit -batchmode -nographics -dedicated '
+    '-ServerPort=${SERVER_PORT} -ServerDisabledNetworkProtocols=${SERVER_DISABLED_NETWORK_PROTOCOLS} '
+    '-ServerMaxPlayerCount=${MAX_PLAYERS} -GameDifficulty=${GAME_DIFFICULTY} -ControlPanelEnabled=false '
+    '-TelnetEnabled=true -TelnetPort=${TELNET_PORT} -TelnetPassword=${PASSWORD} -logfile logs/latest.log & '
+    'echo -e "Checking on telnet connection" && until nc -z -v -w5 127.0.0.1 ${TELNET_PORT}; do echo "Waiting for '
+    'telnet connection..."; sleep 5; done && $( [[ -z ${PASSWORD} ]] && printf %s "telnet -E 127.0.0.1 ${TELNET_PORT}" '
+    '|| printf %s "rcon -t telnet -a 127.0.0.1:${TELNET_PORT} -p {{PASSWORD}}" )'
+)
+SDTD_CONFIG = "serverconfig.custom.xml"
+SDTD_INSTALL_END = "## install end\n"
+SDTD_INSTALL_CHECK = """## TeamCryptid eggs: fail the install when SteamCMD didn't install the game
+## (upstream always printed "Installation completed").
+if [ ! -f /mnt/server/7DaysToDieServer.x86_64 ] || [ ! -f /mnt/server/serverconfig.xml ]; then
+    echo "-----------------------------------------"
+    echo "Installation failed: SteamCMD did not install 7 Days to Die. Check the SteamCMD output above"
+    echo "(disk space, a Steam outage, or a wrong Beta Branch name)."
+    echo "-----------------------------------------"
+    exit 1
+fi
+
+"""
+
+# Replaces upstream's startup. The SteamCMD image runs `echo ${STARTUP}` then `eval` unquoted, so
+# this avoids glob characters (* ? [ ]), backslashes, and "}}" (which the entrypoint rewrites).
+#  1. Run from serverconfig.custom.xml, created from the game's serverconfig.xml on first start.
+#     Steam replaces serverconfig.xml on reinstall (validate) and on updates that change it.
+#  2. Port line: the game uses its port and the UDP ports up to +3 (staff assign the block).
+#  3. Optional Web Dashboard on a customer-entered allocation, checked against the game ports.
+#  4. Optional SandboxCode (V3 moved difficulty and ~30 gameplay settings into it).
+#  5. Telnet stays on loopback: -TelnetPassword= is always empty (the game then listens on
+#     127.0.0.1 only, whatever the config file says). The panel console is a telnet session.
+#  6. If the game exits before its console opens, stop with an error instead of waiting forever.
+#     If the console session ends while the game runs (someone typed exit), reconnect.
+#     When the game exits (shutdown), exit with its code.
+SDTD_STARTUP = (
+    f'CFG={SDTD_CONFIG} ; '
+    'if test ! -f "${CFG}" ; then '
+    'test -f serverconfig.xml || { echo "ERROR: serverconfig.xml is missing. Reinstall the server." ; exit 1 ; } ; '
+    'cp serverconfig.xml "${CFG}" && echo "Created ${CFG} from the game default. Edit ${CFG} for your settings: '
+    'Steam replaces serverconfig.xml on updates and reinstalls." ; fi ; '
+    'echo "Config: ${CFG}" ; '
+    'echo "Ports: 7 Days to Die uses ${SERVER_PORT} (TCP and UDP) and UDP $(( SERVER_PORT + 1 )) to '
+    '$(( SERVER_PORT + 3 )). All four must be allocated to this server." ; '
+    'set -- ; '
+    'if test -n "${WEB_DASHBOARD_PORT}" ; then '
+    'if test "${WEB_DASHBOARD_PORT}" -ge "${SERVER_PORT}" && test "${WEB_DASHBOARD_PORT}" -le $(( SERVER_PORT + 3 )) || '
+    'test "${WEB_DASHBOARD_PORT}" = "${TELNET_PORT}" ; then '
+    'echo "ERROR: Web Dashboard Port ${WEB_DASHBOARD_PORT} clashes with the game ports ${SERVER_PORT} to '
+    '$(( SERVER_PORT + 3 )). Open the Network tab, click Create Allocation, enter the new port as Web Dashboard '
+    'Port, then restart." ; exit 1 ; fi ; '
+    'set -- -WebDashboardEnabled=true -WebDashboardPort=${WEB_DASHBOARD_PORT} ; '
+    'echo "Web Dashboard: on, TCP port ${WEB_DASHBOARD_PORT}" ; '
+    'else set -- -WebDashboardEnabled=false ; fi ; '
+    'if test -n "${SANDBOX_CODE}" ; then set -- "$@" -SandboxCode=${SANDBOX_CODE} ; echo "Sandbox Code: from Startup" ; '
+    'else echo "Sandbox Code: from ${CFG}" ; fi ; '
+    'mkdir -p logs ; '
+    './7DaysToDieServer.x86_64 -configfile="${CFG}" -quit -batchmode -nographics -dedicated '
+    '-ServerPort=${SERVER_PORT} -ServerDisabledNetworkProtocols=${SERVER_DISABLED_NETWORK_PROTOCOLS} '
+    '-ServerMaxPlayerCount=${MAX_PLAYERS} -TelnetEnabled=true -TelnetPort=${TELNET_PORT} -TelnetPassword= '
+    '"$@" -logfile logs/latest.log & '
+    'GAME=$! ; '
+    'echo "Waiting for the game console..." ; '
+    'until nc -z 127.0.0.1 ${TELNET_PORT} 2>/dev/null ; do '
+    'kill -0 ${GAME} 2>/dev/null || { wait ${GAME} ; echo "ERROR: 7 Days to Die exited before its '
+    'console opened. See logs/latest.log in the file manager." ; exit 1 ; } ; sleep 2 ; done ; '
+    'while kill -0 ${GAME} 2>/dev/null ; do '
+    'nc -z 127.0.0.1 ${TELNET_PORT} 2>/dev/null && telnet -E 127.0.0.1 ${TELNET_PORT} ; sleep 1 ; done ; '
+    'wait ${GAME}'
+)
+
+
+def patch_7dtd_install(egg, _upstream, egg_id):
+    inst = egg["scripts"]["installation"]
+    script = inst["script"].replace("\r\n", "\n")
+    if script.count(SDTD_INSTALL_END) != 1 or "+app_update ${SRCDS_APPID}" not in script:
+        sys.exit(f"{egg_id}: upstream install script changed; review the patch")
+    inst["script"] = script.replace(SDTD_INSTALL_END, SDTD_INSTALL_CHECK + SDTD_INSTALL_END)
+
+
+def patch_7dtd_variables(egg, _upstream, egg_id):
+    update_var(egg, egg_id, "MAX_PLAYERS", user_editable=True, rules="required|integer|between:1,100",
+               description="Maximum players at once.")
+    # V3 moved GameDifficulty into SandboxCode; the telnet console stays on loopback (no password).
+    remove_var(egg, egg_id, "GAME_DIFFICULTY")
+    remove_var(egg, egg_id, "PASSWORD")
+    update_var(egg, egg_id, "TELNET_PORT", user_editable=False, rules="required|integer|between:1024,65535",
+               description="Internal port of the game's telnet console, which the panel console uses. It only "
+                           "listens inside the server (no password), so it needs no allocation.")
+    add_var(egg, egg_id, "SANDBOX_CODE", "Sandbox Code",
+            "Game rules as a code from the in-game Sandbox Options menu (V3 replaced Game Difficulty and most "
+            "gameplay settings with it). Leave empty to use SandboxCode from serverconfig.custom.xml. "
+            "Applied on restart.", "", "nullable|regex:/^[A-Za-z0-9]*$/|max:1000")
+    add_var(egg, egg_id, "WEB_DASHBOARD_PORT", "Web Dashboard Port",
+            "Optional. To turn on the built-in Web Dashboard (admin pages and live map, TCP), add an allocation "
+            "in the Network tab and enter its port here, then restart. Leave empty to keep it off.",
+            "", "nullable|integer|between:1024,65535")
+
+
+def patch_7dtd_startup(egg, _upstream, egg_id):
+    if egg["startup"] != SDTD_UPSTREAM_STARTUP:
+        sys.exit(f"{egg_id}: upstream startup changed; review the patch")
+    bad = set(SDTD_STARTUP) & set("*?[]\\")
+    if bad or "}}" in SDTD_STARTUP:
+        sys.exit(f"{egg_id}: startup contains unsafe characters {sorted(bad)} or '}}}}'")
+    egg["startup"] = SDTD_STARTUP
+
+
 def patch_factorio_startup(egg, _upstream, egg_id):
     if egg["startup"] != FACTORIO_UPSTREAM_STARTUP:
         sys.exit(f"{egg_id}: upstream startup changed; review the patch")
@@ -902,6 +1015,9 @@ PATCHES = {
     "factorio_install": patch_factorio_install,
     "factorio_variables": patch_factorio_variables,
     "factorio_startup": patch_factorio_startup,
+    "7dtd_install": patch_7dtd_install,
+    "7dtd_variables": patch_7dtd_variables,
+    "7dtd_startup": patch_7dtd_startup,
 }
 
 

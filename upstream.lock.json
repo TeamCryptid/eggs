@@ -16,7 +16,7 @@
       "commit_date": "2026-10-13T14:28:55-07:00"
     }
   },
-  "built": "2026-10-24",
+  "built": "2026-10-30",
   "eggs": [
     {
       "id": "neoforge",
@@ -247,6 +247,18 @@
         "factorio_install",
         "factorio_variables",
         "factorio_startup"
+      ]
+    },
+    {
+      "id": "7daystodie",
+      "upstream": "steamcmd",
+      "upstream_path": "7_days_to_die/egg-pterodactyl-7-days-to-die.json",
+      "upstream_sha256": "f9f1ce04d387e1362bfb72bf8af51d653433da2f8dc45567cc78f2b629635fc0",
+      "path": "7daystodie/egg-pterodactyl-7-days-to-die.json",
+      "patches": [
+        "7dtd_install",
+        "7dtd_variables",
+        "7dtd_startup"
       ]
     }
   ]
